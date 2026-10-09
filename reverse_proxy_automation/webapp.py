@@ -74,6 +74,7 @@ class DashboardServer(ThreadingHTTPServer):
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "ReverseProxyAutomation/1.0"
+    timeout = 30
 
     def log_message(self, format_string, *args):
         print(f"[{self.log_date_time_string()}] {format_string % args}")
@@ -94,7 +95,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def _trusted_host(self):
         host = _normalized_host(self.headers.get("Host", ""))
-        return host is not None and host in self.server.allowed_hosts
+        if host is None:
+            return False
+        try:
+            ipaddress.ip_address(host)
+            return True
+        except ValueError:
+            return host in self.server.allowed_hosts
 
     def _send(self, status, body, content_type="application/json; charset=utf-8"):
         raw = body if isinstance(body, bytes) else body.encode("utf-8")
@@ -281,7 +288,7 @@ def main(argv=None):
     # added to the service environment before the next run.
     try:
         saved_config = config_store.load()
-    except (OSError, json.JSONDecodeError) as error:
+    except (OSError, ValueError) as error:
         print(f"Warning: could not read {args.config}: {error}")
     else:
         for description, name in unresolved_secret_references(saved_config):

@@ -285,15 +285,19 @@ class SecretReferenceTests(unittest.TestCase):
         self.assertIn("NPMPlus instance 'lab' secret", str(caught.exception))
         self.assertIn("not a valid environment variable name", str(caught.exception))
 
-    def test_a_legacy_unsupported_reference_is_rejected_when_loaded(self):
+    def test_a_legacy_custom_reference_loads_and_can_be_repaired(self):
         with tempfile.TemporaryDirectory() as directory:
             store = store_in(directory)
             store.path.write_text(
-                json.dumps({"pve_local_password": "env:APP_PASSWORD"}),
+                json.dumps({"pve_local_password": "env:LAB_SECRET"}),
                 encoding="utf-8",
             )
+            loaded = store.load()
+            self.assertEqual(loaded["pve_local_password"], "env:LAB_SECRET")
             with self.assertRaisesRegex(ValueError, "variable assigned to this secret field"):
-                store.load()
+                validate_config(loaded, allow_incomplete=True)
+            saved = store.save({"pve_local_password": "env:PVE_LOCAL_PASSWORD"})
+            self.assertEqual(saved["pve_local_password"], "env:PVE_LOCAL_PASSWORD")
 
     def test_the_psl_password_reference_is_validated_too(self):
         with self.assertRaises(ValueError) as caught:

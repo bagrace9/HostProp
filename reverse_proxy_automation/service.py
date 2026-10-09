@@ -20,6 +20,8 @@ from .planner import (
 from .sync import adopted_host_ids, adopt_host, forget_host, load_state, reconcile, save_state
 
 
+LOGGER = logging.getLogger(__name__)
+
 DEFAULT_CONFIG = {
     "pve_local_url": "",
     "pve_local_username": "",
@@ -137,23 +139,6 @@ def _check_reference_name(description, value, allowed_pattern=None):
             f"{description} must reference the variable assigned to this secret field "
             "(PVE_LOCAL_PASSWORD for PSL or NPM_<INSTANCE>_SECRET for NPMPlus)"
         )
-
-
-def _validate_secret_references(config):
-    _check_reference_name(
-        "PVE Scripts Local password",
-        config.get("pve_local_password"),
-        PSL_SECRET_ENV_PATTERN,
-    )
-    instances = config.get("instances")
-    if isinstance(instances, dict):
-        for name, entry in instances.items():
-            if isinstance(entry, dict):
-                _check_reference_name(
-                    f"NPMPlus instance '{name}' secret",
-                    entry.get("secret"),
-                    npm_secret_env_pattern(name),
-                )
 
 
 def _as_bool(value, default):
@@ -280,9 +265,7 @@ class ConfigStore:
                 return normalize_config({})
             with self.path.open("r", encoding="utf-8") as config_file:
                 loaded = json.load(config_file)
-            config = normalize_config(loaded)
-            _validate_secret_references(config)
-            return config
+            return normalize_config(loaded)
 
     def save(self, submitted):
         with self.lock:
@@ -597,6 +580,14 @@ class SyncService:
                     planned_names=planned["names_by_domain"],
                 )
                 npm_seconds = perf_counter() - npm_started
+                for row in rows:
+                    if row[0] != "OK":
+                        LOGGER.info(
+                            "Sync result: status=%s instance=%s target=%s",
+                            row[0],
+                            row[1],
+                            row[2],
+                        )
             finally:
                 # Persist ownership of anything already created, even if a later step failed.
                 if apply_changes:
@@ -975,7 +966,7 @@ class SyncService:
                         refresh_lxc_config=True,
                     )
             except Exception as error:
-                logging.exception("Background watcher iteration failed")
+                LOGGER.exception("Background watcher iteration failed")
                 self._set_status(
                     state="error",
                     message=f"Background watcher failed and will retry: {error}",

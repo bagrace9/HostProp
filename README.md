@@ -55,6 +55,7 @@ Every secret field â€” an instance's secret and the PVE Scripts Local password â
 
 - A reference is `env:` followed by a supported variable name: `env:NPM_LAB_SECRET` for an NPMPlus instance or `env:PVE_LOCAL_PASSWORD` for PSL. Anything else stays a literal password.
 - The variable name must match the field: NPMPlus secrets use `NPM_<INSTANCE>_SECRET`, and the PSL password uses `PVE_LOCAL_PASSWORD`. The `env:` prefix is reserved, so a password that itself begins with `env:` cannot be stored literally.
+- Existing settings files that use custom environment-variable names still load so the dashboard can be opened and repaired. Replace those references with the supported field-specific names before saving; runs and settings saves reject unsupported references.
 - There is no implicit lookup, so a field left blank still means "no password".
 - The variables belong to the process that runs the dashboard, so set them where it is started: `$env:NPM_LAB_SECRET = "..."` in the shell or `.venv` activation you launch it from, `Environment=` in a systemd unit, or the task's environment when Task Scheduler runs it. A `.env` file is not parsed.
 - An unresolved reference fails the run and the `Test` buttons with a message naming the variable, and the launcher prints the same warning at startup. It never falls back to an empty password, because a request without a secret would just be rejected.

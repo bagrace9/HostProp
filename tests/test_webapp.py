@@ -229,6 +229,14 @@ class DashboardRequestSecurityTests(unittest.TestCase):
         )
         self.assertEqual(response.status, 200)
 
+    def test_any_ip_literal_host_is_accepted_without_an_allowlist_entry(self):
+        response = self._request(
+            "GET",
+            "/api/status",
+            {"Host": "192.0.2.42:8088", "Authorization": self._auth_header()},
+        )
+        self.assertEqual(response.status, 200)
+
     def test_negative_content_length_is_rejected(self):
         request = (
             "POST /api/config HTTP/1.1\r\n"
@@ -240,6 +248,9 @@ class DashboardRequestSecurityTests(unittest.TestCase):
             response = connection.makefile("rb").read().decode("utf-8")
         self.assertIn(" 400 ", response)
         self.assertIn("Invalid request body length", response)
+
+    def test_request_handlers_use_a_finite_socket_timeout(self):
+        self.assertEqual(Handler.timeout, 30)
 
     def test_guest_aliases_are_only_edited_in_host_management(self):
         page = (WEB_DIR / "index.html").read_text(encoding="utf-8")

@@ -87,6 +87,42 @@ def service_for(directory, instances, vlan_map):
 
 
 class MultiInstanceRunTests(unittest.TestCase):
+    def test_non_ok_sync_rows_are_logged_without_response_details(self):
+        previous_scripts = list(PSL_SCRIPTS)
+        self.addCleanup(lambda: PSL_SCRIPTS.__setitem__(slice(None), previous_scripts))
+        PSL_SCRIPTS[:] = [guest("photos", "20", 8081)]
+
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch("reverse_proxy_automation.service.PveScriptsLocalClient", FakePsl), \
+                mock.patch(
+                    "reverse_proxy_automation.service.NpmPlusClient",
+                    side_effect=lambda name, url, identity="", secret="", verify_tls=True:
+                        FakeNpmPlus(name, url, identity, secret),
+                ), \
+                mock.patch(
+                    "reverse_proxy_automation.service.reconcile",
+                    return_value=[
+                        ("CREATE", "lab", "photos.example.net", "created"),
+                        ("CONFLICT", "lab", "other.example.net", "sensitive response detail"),
+                        ("OK", "lab", "unchanged.example.net", "already synchronized"),
+                    ],
+                ):
+            service, _ = service_for(
+                directory,
+                {"lab": {"url": "https://lab.example.net:81"}},
+                {"20": {"instance": "lab", "zone": "internal.example.net"}},
+            )
+            try:
+                with mock.patch("reverse_proxy_automation.service.LOGGER.info") as log_info:
+                    status = service.run_once(apply_changes=True)
+            finally:
+                service.stop()
+
+        self.assertEqual(status["state"], "ok", status["message"])
+        self.assertEqual(log_info.call_count, 2)
+        self.assertEqual(log_info.call_args_list[0].args[1:], ("CREATE", "lab", "photos.example.net"))
+        self.assertEqual(log_info.call_args_list[1].args[1:], ("CONFLICT", "lab", "other.example.net"))
+
     def test_watcher_runs_immediately_on_startup_when_enabled(self):
         with tempfile.TemporaryDirectory() as directory:
             store = ConfigStore(Path(directory) / "app-config.json")
@@ -159,7 +195,7 @@ class MultiInstanceRunTests(unittest.TestCase):
                 return {"state": "ok"}
 
             with mock.patch.object(SyncService, "run_once", record_run), \
-                    mock.patch("reverse_proxy_automation.service.logging.exception"):
+                    mock.patch("reverse_proxy_automation.service.LOGGER.exception"):
                 service = SyncService(store, Path(directory) / "sync-state.json")
                 try:
                     deadline = threading.Event()
