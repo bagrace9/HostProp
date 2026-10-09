@@ -1,7 +1,12 @@
 from pathlib import Path
+import base64
+import http.client
+import socket
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
-from reverse_proxy_automation.webapp import WEB_DIR
+from reverse_proxy_automation.webapp import DashboardServer, Handler, WEB_DIR
 
 
 class DashboardAssetTests(unittest.TestCase):
@@ -168,6 +173,73 @@ class DashboardAssetTests(unittest.TestCase):
         self.assertIn("function saveEntryPort(entry,input,button)", page)
         self.assertIn("Port override for", page)
         self.assertIn("Leave the port override blank to use PSL detection", page)
+
+
+class DashboardRequestSecurityTests(unittest.TestCase):
+    def setUp(self):
+        class ConfigStub:
+            def save(self, _config):
+                raise AssertionError("invalid body must be rejected before configuration is saved")
+
+        self.server = DashboardServer(
+            ("127.0.0.1", 0),
+            Handler,
+            ConfigStub(),
+            type("SyncStub", (), {"get_status": lambda self: {}})(),
+            "pässword",
+        )
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.addCleanup(self._stop_server)
+
+    def _stop_server(self):
+        self.server.shutdown()
+        self.thread.join(timeout=2)
+        self.server.server_close()
+
+    def _request(self, method, path, headers=None):
+        connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=2)
+        self.addCleanup(connection.close)
+        connection.request(method, path, headers=headers or {})
+        return connection.getresponse()
+
+    def _auth_header(self):
+        credentials = base64.b64encode("user:pässword".encode("utf-8")).decode("ascii")
+        return f"Basic {credentials}"
+
+    def test_basic_auth_accepts_a_non_ascii_configured_password(self):
+        response = self._request(
+            "GET",
+            "/api/status",
+            {"Host": "localhost", "Authorization": self._auth_header()},
+        )
+        self.assertEqual(response.status, 200)
+
+    def test_dns_rebinding_host_is_rejected_before_authentication(self):
+        response = self._request("GET", "/api/status", {"Host": "attacker.example"})
+        self.assertEqual(response.status, 421)
+        self.assertIn("Untrusted Host header", response.read().decode("utf-8"))
+
+    def test_configured_reverse_proxy_host_is_accepted(self):
+        self.server.allowed_hosts.add("dashboard.example.net")
+        response = self._request(
+            "GET",
+            "/api/status",
+            {"Host": "dashboard.example.net:8443", "Authorization": self._auth_header()},
+        )
+        self.assertEqual(response.status, 200)
+
+    def test_negative_content_length_is_rejected(self):
+        request = (
+            "POST /api/config HTTP/1.1\r\n"
+            f"Host: localhost\r\nOrigin: http://localhost\r\nAuthorization: {self._auth_header()}\r\n"
+            "Content-Type: application/json\r\nContent-Length: -1\r\nConnection: close\r\n\r\n"
+        ).encode("ascii")
+        with socket.create_connection(("127.0.0.1", self.server.server_port), timeout=2) as connection:
+            connection.sendall(request)
+            response = connection.makefile("rb").read().decode("utf-8")
+        self.assertIn(" 400 ", response)
+        self.assertIn("Invalid request body length", response)
 
     def test_guest_aliases_are_only_edited_in_host_management(self):
         page = (WEB_DIR / "index.html").read_text(encoding="utf-8")

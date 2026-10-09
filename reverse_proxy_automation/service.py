@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 import threading
@@ -60,6 +61,13 @@ LEGACY_INSTANCE_KEYS = {
 # secret-free while the value never has to pass through the browser.
 SECRET_ENV_PREFIX = "env:"
 ENV_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+PSL_SECRET_ENV_PATTERN = re.compile(r"^PVE_LOCAL_PASSWORD$")
+
+
+def npm_secret_env_pattern(instance):
+    """Environment variable allowed for one named NPMPlus instance."""
+    suffix = re.sub(r"[^A-Za-z0-9_]", "_", str(instance)).upper()
+    return re.compile(rf"^NPM_{re.escape(suffix)}_SECRET$")
 
 
 def secret_env_name(value):
@@ -115,13 +123,37 @@ def check_secret_references(config, environ=None):
     raise ValueError(f"{details}. Set it in the environment the dashboard was started from")
 
 
-def _check_reference_name(description, value):
-    """Reject an "env:" reference whose variable name could never exist."""
+def _check_reference_name(description, value, allowed_pattern=None):
+    """Reject env references that do not follow the field's supported naming rule."""
     name = secret_env_name(value)
-    if name is not None and not ENV_NAME_PATTERN.fullmatch(name):
+    if name is None:
+        return
+    if not ENV_NAME_PATTERN.fullmatch(name):
         raise ValueError(
             f"{description} references '{name}', which is not a valid environment variable name"
         )
+    if allowed_pattern is not None and not allowed_pattern.fullmatch(name):
+        raise ValueError(
+            f"{description} must reference the variable assigned to this secret field "
+            "(PVE_LOCAL_PASSWORD for PSL or NPM_<INSTANCE>_SECRET for NPMPlus)"
+        )
+
+
+def _validate_secret_references(config):
+    _check_reference_name(
+        "PVE Scripts Local password",
+        config.get("pve_local_password"),
+        PSL_SECRET_ENV_PATTERN,
+    )
+    instances = config.get("instances")
+    if isinstance(instances, dict):
+        for name, entry in instances.items():
+            if isinstance(entry, dict):
+                _check_reference_name(
+                    f"NPMPlus instance '{name}' secret",
+                    entry.get("secret"),
+                    npm_secret_env_pattern(name),
+                )
 
 
 def _as_bool(value, default):
@@ -213,6 +245,8 @@ def normalize_config(loaded):
     config["entry_port_overrides"] = loaded.get("entry_port_overrides", {})
     # Sent to the browser and used to build the PSL client, so keep it a real bool.
     config["pve_local_verify_tls"] = _as_bool(config.get("pve_local_verify_tls"), True)
+    for key in ("watch_enabled", "auto_apply", "delete_removed_hosts"):
+        config[key] = _as_bool(config.get(key), False)
     return config
 
 
@@ -246,7 +280,9 @@ class ConfigStore:
                 return normalize_config({})
             with self.path.open("r", encoding="utf-8") as config_file:
                 loaded = json.load(config_file)
-            return normalize_config(loaded)
+            config = normalize_config(loaded)
+            _validate_secret_references(config)
+            return config
 
     def save(self, submitted):
         with self.lock:
@@ -293,10 +329,21 @@ def validate_config(config, allow_incomplete=False):
                 raise ValueError(f"NPMPlus instance '{name}' field '{field}' must be a string")
         if not isinstance(entry.get("verify_tls", True), bool):
             raise ValueError(f"NPMPlus instance '{name}' field 'verify_tls' must be true or false")
-        _check_reference_name(f"NPMPlus instance '{name}' secret", entry.get("secret"))
-    _check_reference_name("PVE Scripts Local password", config.get("pve_local_password"))
+        _check_reference_name(
+            f"NPMPlus instance '{name}' secret",
+            entry.get("secret"),
+            npm_secret_env_pattern(name),
+        )
+    _check_reference_name(
+        "PVE Scripts Local password",
+        config.get("pve_local_password"),
+        PSL_SECRET_ENV_PATTERN,
+    )
     if not isinstance(config.get("pve_local_verify_tls", True), bool):
         raise ValueError("PVE Scripts Local field 'pve_local_verify_tls' must be true or false")
+    for key in ("watch_enabled", "auto_apply", "delete_removed_hosts"):
+        if not isinstance(config.get(key), bool):
+            raise ValueError(f"'{key}' must be true or false")
     if not isinstance(config.get("vlan_map"), dict):
         raise ValueError("VLAN map must be a JSON object keyed by VLAN tag")
     entry_aliases = config.get("entry_aliases")
@@ -910,20 +957,28 @@ class SyncService:
 
     def _run_loop(self):
         first_iteration = True
+        interval = 30
         while not self.stop_event.is_set():
-            config = self.config_store.load()
-            configured_interval = config.get("poll_interval_seconds")
-            interval = 30 if configured_interval is None else max(30, int(configured_interval))
-            if first_iteration:
-                first_iteration = False
-            else:
+            if not first_iteration:
                 self.wake.wait(interval)
-            self.wake.clear()
+                self.wake.clear()
             if self.stop_event.is_set():
                 break
-            config = self.config_store.load()
-            if config.get("watch_enabled"):
-                self.run_once(
-                    apply_changes=bool(config.get("auto_apply")),
-                    refresh_lxc_config=True,
+            first_iteration = False
+            try:
+                config = self.config_store.load()
+                configured_interval = config.get("poll_interval_seconds")
+                interval = 30 if configured_interval is None else max(30, int(configured_interval))
+                if config.get("watch_enabled"):
+                    self.run_once(
+                        apply_changes=config.get("auto_apply", False),
+                        refresh_lxc_config=True,
+                    )
+            except Exception as error:
+                logging.exception("Background watcher iteration failed")
+                self._set_status(
+                    state="error",
+                    message=f"Background watcher failed and will retry: {error}",
+                    last_check=datetime.now(timezone.utc).isoformat(),
                 )
+                interval = 30

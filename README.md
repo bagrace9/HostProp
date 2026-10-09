@@ -1,6 +1,6 @@
-# Reverse Proxy Automation
+# HostProp
 
-Creates or updates NPMPlus proxy hosts from the installed-guest records in PVE Scripts Local.
+HostProp propagates installed-guest changes from PVE Scripts Local to NPMPlus proxy hosts, keeping homelab services connected and accessible. Its dashboard provides previews and host management, with continuous propagation available through the watcher.
 
 ## Mapping
 
@@ -38,6 +38,8 @@ Entries that already exist on an NPMPlus are shown in `Host management`, where y
 
 Passwords and API secrets are write-only in the page: leaving a secret field blank keeps the stored value, and deleting an instance row deletes its credentials with it. They are saved in `data/app-config.json`, created with mode `0600` and rewritten atomically; Windows ignores that mode, so there the file relies on the NTFS permissions it inherits from your profile directory. Keep it private and out of version control, or use an environment reference so it holds no secret at all. A settings file that still uses the older `npm_lab_*` / `npm_public_*` keys is migrated to named instances the first time it is read. `.env.example` lists the optional environment variables the launcher reads.
 
+When the dashboard is accessed through a DNS name (for example, behind a reverse proxy), add that name to the comma-separated `WEB_ALLOWED_HOSTS` environment variable. `localhost`, loopback addresses, and IP-literal Host values are accepted by default; other DNS names are rejected to protect the dashboard from DNS-rebinding requests. Keep `APP_PASSWORD` enabled when exposing the dashboard beyond the local machine, and use HTTPS or a trusted TLS reverse proxy.
+
 ### Keeping passwords out of the settings file
 
 Every secret field — an instance's secret and the PVE Scripts Local password — also accepts an environment reference instead of the password itself. The dashboard stores the reference verbatim and reads the value from its own environment each time it builds a client, so `data/app-config.json` can hold no plaintext credential at all:
@@ -51,9 +53,9 @@ Every secret field — an instance's secret and the PVE Scripts Local password �
 }
 ```
 
-- A reference is `env:` followed by a variable name, for example `env:NPM_LAB_SECRET`. Anything else stays a literal password.
-- The name must be a valid environment variable name (letters, digits, and `_`, not starting with a digit), and `env:` is reserved, so a password that itself begins with `env:` cannot be stored literally.
-- Name the variables however you like; `NPM_<INSTANCE>_SECRET` per instance and `PVE_LOCAL_PASSWORD` are only a convention. There is no implicit lookup, so a field left blank still means "no password".
+- A reference is `env:` followed by a supported variable name: `env:NPM_LAB_SECRET` for an NPMPlus instance or `env:PVE_LOCAL_PASSWORD` for PSL. Anything else stays a literal password.
+- The variable name must match the field: NPMPlus secrets use `NPM_<INSTANCE>_SECRET`, and the PSL password uses `PVE_LOCAL_PASSWORD`. The `env:` prefix is reserved, so a password that itself begins with `env:` cannot be stored literally.
+- There is no implicit lookup, so a field left blank still means "no password".
 - The variables belong to the process that runs the dashboard, so set them where it is started: `$env:NPM_LAB_SECRET = "..."` in the shell or `.venv` activation you launch it from, `Environment=` in a systemd unit, or the task's environment when Task Scheduler runs it. A `.env` file is not parsed.
 - An unresolved reference fails the run and the `Test` buttons with a message naming the variable, and the launcher prints the same warning at startup. It never falls back to an empty password, because a request without a secret would just be rejected.
 - The page shows `From NPM_LAB_SECRET` in place of a stored reference, or `NPM_LAB_SECRET is not set` when the variable is missing; secret values remain write-only and are never sent to the browser.
@@ -156,7 +158,7 @@ systemctl enable --now reverse-proxy-automation
 systemctl status reverse-proxy-automation
 ```
 
-Open `http://<lxc-address>:8088/` on your trusted network and enter `reverse-proxy-automation` as the HTTP Basic username and the configured password. Add the PSL and NPMPlus connections, set the public domain and VLAN routing, then run **Preview now** and confirm the plan. To keep proxies synchronized with PSL, set a polling interval (for example, 60 seconds), enable **Watch PSL** and **Automatically apply**, and save. The watcher then reads PSL and applies changes at the configured interval; there is no need to leave the browser open. Keep **Delete removed guests** disabled unless you specifically want the app to remove managed proxy hosts whose guests disappear from PSL, and set its deletion limit before enabling it.
+Open `http://<lxc-address>:8088/` on your trusted network and enter `reverse-proxy-automation` as the HTTP Basic username and the configured password. Add the PSL and NPMPlus connections, set the public domain and VLAN routing, then run **Preview now** and confirm the plan. To propagate PSL changes to your proxies automatically, set a polling interval (for example, 60 seconds), enable **Watch PSL** and **Automatically apply**, and save. The watcher then reads PSL and propagates the resulting changes at the configured interval; there is no need to leave the browser open. Keep **Delete removed guests** disabled unless you specifically want the app to remove managed proxy hosts whose guests disappear from PSL, and set its deletion limit before enabling it.
 
 The service's config and ownership files are stored under `/var/lib/reverse-proxy-automation/` and survive upgrades and reboots. To update the app, stop the service, update the checkout, then start it again:
 
@@ -169,7 +171,7 @@ systemctl start reverse-proxy-automation
 
 Use `journalctl -u reverse-proxy-automation -f` to follow logs. If you change the service unit itself, run `systemctl daemon-reload` before restarting.
 
-When `Watch PSL` is enabled, the watcher runs once immediately when the app starts, then every configured interval refreshes the running containers' LXC config and Web UI endpoints through PSL before planning. If `Automatically apply` is also enabled, that fresh plan is reconciled to NPMPlus; without it, the watcher refreshes and previews the plan without writing proxy changes. Manual `Preview now` and `Apply now` also perform a refresh. Refreshing makes PSL queries (including SSH-based guest config and endpoint detection) for each eligible non-VM record, so the load grows with the number of records; in a typical home setup, start with a 300-second (5-minute) interval and shorten it only if you need changes applied sooner. The minimum allowed interval is 30 seconds. The dashboard's `PSL guests` figure counts containers, so a container PSL describes with several records is counted once.
+When `Watch PSL` is enabled, the watcher runs once immediately when the app starts, then every configured interval refreshes the running containers' LXC config and Web UI endpoints through PSL before planning. If `Automatically apply` is also enabled, it propagates that fresh plan to NPMPlus; without it, the watcher refreshes and previews the plan without writing proxy changes. Manual `Preview now` and `Apply now` also perform a refresh. Refreshing makes PSL queries (including SSH-based guest config and endpoint detection) for each eligible non-VM record, so the load grows with the number of records; in a typical home setup, start with a 300-second (5-minute) interval and shorten it only if you need changes applied sooner. The minimum allowed interval is 30 seconds. The dashboard's `PSL guests` figure counts containers, so a container PSL describes with several records is counted once.
 
 The app deletes a proxy host only when its ID is recorded in the state file and the guest has left PVE Scripts Local, or when the guest moved to another NPMPlus instance. A container PSL now describes under a new name — a reinstall under another script name, say — counts as a guest that has left under its old name, so a host created for that old name is deleted the same way. An instance that has no configured URL is never contacted, so its recorded hosts are left in place. `Delete removed guests` is off initially; enable it and set `Max deletions per run` to permit cleanup. A run that would delete more than the configured limit deletes nothing. A matching host created manually is reported as a conflict and never overwritten unless you adopt it.
 

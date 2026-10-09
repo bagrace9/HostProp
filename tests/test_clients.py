@@ -1,16 +1,19 @@
 import json
 import ssl
+import threading
 import unittest
 from io import BytesIO
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlparse
-from urllib.request import HTTPSHandler
+from urllib.request import HTTPSHandler, Request
 
 from reverse_proxy_automation.clients import (
     ApiError,
     JsonClient,
     NpmPlusClient,
     PveScriptsLocalClient,
+    SameOriginRedirectHandler,
     unverified_tls_context,
 )
 
@@ -91,6 +94,64 @@ class ConnectionFailureTests(unittest.TestCase):
         self.assertIn("Could not reach http://psl.internal.example.net:3000", message)
         self.assertIn("connection refused", message)
         self.assertNotIn("self-signed", message)
+
+
+class RedirectSecurityTests(unittest.TestCase):
+    def test_same_origin_redirects_remain_allowed(self):
+        handler = SameOriginRedirectHandler()
+        request = Request("http://127.0.0.1:8088/api/status")
+        redirected = handler.redirect_request(
+            request, None, 302, "Found", {}, "http://127.0.0.1:8088/api/status/"
+        )
+        self.assertIsNotNone(redirected)
+        self.assertEqual(redirected.full_url, "http://127.0.0.1:8088/api/status/")
+
+    def test_bearer_authorization_is_not_forwarded_to_a_different_origin(self):
+        captured_authorization = []
+
+        class TargetHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                captured_authorization.append(self.headers.get("Authorization"))
+                self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, format_string, *args):
+                pass
+
+        target = HTTPServer(("127.0.0.1", 0), TargetHandler)
+        target_thread = threading.Thread(target=target.serve_forever, daemon=True)
+        target_thread.start()
+
+        def stop_server(server, thread):
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.addCleanup(stop_server, target, target_thread)
+
+        class RedirectHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(302)
+                self.send_header(
+                    "Location",
+                    f"http://127.0.0.1:{target.server_port}/collect",
+                )
+                self.end_headers()
+
+            def log_message(self, format_string, *args):
+                pass
+
+        source = HTTPServer(("127.0.0.1", 0), RedirectHandler)
+        source_thread = threading.Thread(target=source.serve_forever, daemon=True)
+        source_thread.start()
+        self.addCleanup(stop_server, source, source_thread)
+
+        client = JsonClient(f"http://127.0.0.1:{source.server_port}")
+        client.extra_headers["Authorization"] = "Bearer secret-token"
+        with self.assertRaises(ApiError) as caught:
+            client.request("/api/status")
+        self.assertEqual(caught.exception.status, 302)
+        self.assertEqual(captured_authorization, [])
 
 
 class EndpointSwitchTests(unittest.TestCase):

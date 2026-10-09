@@ -1,8 +1,10 @@
 import argparse
 import base64
 import hmac
+import ipaddress
 import json
 import os
+import re
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -24,17 +26,50 @@ from .service import ConfigStore, SyncService, public_config, unresolved_secret_
 
 
 WEB_DIR = Path(__file__).parent / "web"
+DEFAULT_ALLOWED_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+def _normalized_host(host_value):
+    """Return a normalized Host name, or None for malformed authority values."""
+    try:
+        parsed = urlparse("//" + host_value)
+        hostname = parsed.hostname
+        parsed.port
+    except ValueError:
+        return None
+    if (
+        not hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path
+        or parsed.query
+        or parsed.fragment
+    ):
+        return None
+    hostname = hostname.rstrip(".").lower()
+    try:
+        return ipaddress.ip_address(hostname).compressed
+    except ValueError:
+        if not re.fullmatch(r"[a-z0-9.-]+", hostname):
+            return None
+        return hostname
 
 
 class DashboardServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, address, handler, config_store, sync_service, app_password):
+    def __init__(self, address, handler, config_store, sync_service, app_password, allowed_hosts=None):
         super().__init__(address, handler)
         self.config_store = config_store
         self.sync_service = sync_service
         self.app_password = app_password
+        self.allowed_hosts = set(DEFAULT_ALLOWED_HOSTS)
+        for host in allowed_hosts or ():
+            normalized = _normalized_host(host)
+            if normalized is None:
+                raise ValueError(f"Invalid WEB_ALLOWED_HOSTS entry: {host!r}")
+            self.allowed_hosts.add(normalized)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -55,7 +90,11 @@ class Handler(BaseHTTPRequestHandler):
             _, supplied = decoded.split(":", 1)
         except (ValueError, UnicodeDecodeError):
             return False
-        return hmac.compare_digest(supplied, password)
+        return hmac.compare_digest(supplied.encode("utf-8"), password.encode("utf-8"))
+
+    def _trusted_host(self):
+        host = _normalized_host(self.headers.get("Host", ""))
+        return host is not None and host in self.server.allowed_hosts
 
     def _send(self, status, body, content_type="application/json; charset=utf-8"):
         raw = body if isinstance(body, bytes) else body.encode("utf-8")
@@ -73,9 +112,14 @@ class Handler(BaseHTTPRequestHandler):
         self._send(status, json.dumps(payload))
 
     def _body(self):
+        content_length = self.headers.get("content-length")
+        if content_length is None:
+            raise ValueError("Invalid request body length")
         try:
-            size = int(self.headers.get("content-length", "0"))
+            size = int(content_length)
         except ValueError:
+            raise ValueError("Invalid request body length")
+        if size <= 0:
             raise ValueError("Invalid request body length")
         if size > 65536:
             raise ValueError("Request body is too large")
@@ -108,6 +152,9 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, body, "text/html; charset=utf-8")
 
     def do_GET(self):
+        if not self._trusted_host():
+            self._json(421, {"error": "Untrusted Host header"})
+            return
         if not self._authorized():
             self.send_response(401)
             self.send_header("WWW-Authenticate", 'Basic realm="Proxy automation"')
@@ -136,6 +183,9 @@ class Handler(BaseHTTPRequestHandler):
             self._json(502, {"error": str(error)})
 
     def do_POST(self):
+        if not self._trusted_host():
+            self._json(421, {"error": "Untrusted Host header"})
+            return
         if not self._authorized():
             self._json(401, {"error": "Authentication required"})
             return
@@ -211,6 +261,15 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     app_password = os.environ.get("APP_PASSWORD", "")
+    allowed_hosts = set(DEFAULT_ALLOWED_HOSTS)
+    for configured_host in os.environ.get("WEB_ALLOWED_HOSTS", "").split(","):
+        configured_host = configured_host.strip()
+        if not configured_host:
+            continue
+        normalized = _normalized_host(configured_host)
+        if normalized is None:
+            parser.error(f"Invalid WEB_ALLOWED_HOSTS entry: {configured_host!r}")
+        allowed_hosts.add(normalized)
     if args.host not in {"127.0.0.1", "localhost", "::1"} and not app_password:
         parser.error("Set APP_PASSWORD before binding to a network interface other than localhost")
     if not (WEB_DIR / "index.html").is_file():
@@ -228,7 +287,14 @@ def main(argv=None):
         for description, name in unresolved_secret_references(saved_config):
             print(f"Warning: {description} reads {name} from the environment, which is not set.")
     sync_service = SyncService(config_store, args.state)
-    server = DashboardServer((args.host, args.port), Handler, config_store, sync_service, app_password)
+    server = DashboardServer(
+        (args.host, args.port),
+        Handler,
+        config_store,
+        sync_service,
+        app_password,
+        allowed_hosts,
+    )
     print(f"Dashboard listening at http://{args.host}:{args.port}/")
     if args.host not in {"127.0.0.1", "localhost", "::1"}:
         print("APP_PASSWORD authentication is enabled; use HTTPS or a trusted TLS reverse proxy on untrusted networks.")

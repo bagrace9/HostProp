@@ -143,6 +143,38 @@ class MultiInstanceRunTests(unittest.TestCase):
             finally:
                 service.stop()
 
+    def test_watcher_survives_configuration_failure_and_retries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfigStore(Path(directory) / "app-config.json")
+            config = {
+                "watch_enabled": True,
+                "auto_apply": False,
+                "poll_interval_seconds": 300,
+            }
+            store.load = mock.Mock(side_effect=[OSError("temporary read failure"), config])
+            called = threading.Event()
+
+            def record_run(service, apply_changes=False, refresh_lxc_config=False):
+                called.set()
+                return {"state": "ok"}
+
+            with mock.patch.object(SyncService, "run_once", record_run), \
+                    mock.patch("reverse_proxy_automation.service.logging.exception"):
+                service = SyncService(store, Path(directory) / "sync-state.json")
+                try:
+                    deadline = threading.Event()
+                    for _ in range(100):
+                        if service.get_status()["state"] == "error":
+                            break
+                        deadline.wait(0.01)
+                    self.assertEqual(service.get_status()["state"], "error")
+                    self.assertIn("temporary read failure", service.get_status()["message"])
+                    self.assertTrue(service.thread.is_alive())
+                    service.wake_loop()
+                    self.assertTrue(called.wait(2), "watcher did not recover after configuration became readable")
+                finally:
+                    service.stop()
+
     def test_refresh_failure_is_a_plan_skip_and_does_not_fail_the_run(self):
         script = guest("photos", "20", 8081)
         script["_refresh_error"] = "Could not refresh LXC config for container 101: SSH connection failed"
@@ -412,7 +444,7 @@ class SecretReferenceRunTests(unittest.TestCase):
                 mock.patch("reverse_proxy_automation.service.NpmPlusClient", refuse):
             service, _ = service_for(
                 directory,
-                {"dmz": {"url": "https://dmz.example.net:81", "secret": "env:NPM_TEST_VARIABLE_NOT_SET"}},
+                {"dmz": {"url": "https://dmz.example.net:81", "secret": "env:NPM_DMZ_SECRET"}},
                 {"30": {"instance": "dmz", "zone": "dmz.example.net"}},
             )
             try:
@@ -420,7 +452,7 @@ class SecretReferenceRunTests(unittest.TestCase):
             finally:
                 service.stop()
         self.assertEqual(status["state"], "error")
-        self.assertIn("NPM_TEST_VARIABLE_NOT_SET", status["message"])
+        self.assertIn("NPM_DMZ_SECRET", status["message"])
         self.assertIn("not set", status["message"])
 
     def test_a_run_resolves_the_psl_password_reference_before_building_the_client(self):
@@ -432,11 +464,11 @@ class SecretReferenceRunTests(unittest.TestCase):
 
         PSL_SCRIPTS[:] = []
         with tempfile.TemporaryDirectory() as directory, \
-                mock.patch.dict(os.environ, {"PVE_PSL_PASSWORD_FOR_TESTS": "psl-from-env"}), \
+                mock.patch.dict(os.environ, {"PVE_LOCAL_PASSWORD": "psl-from-env"}), \
                 mock.patch("reverse_proxy_automation.service.PveScriptsLocalClient", psl_factory), \
                 mock.patch("reverse_proxy_automation.service.NpmPlusClient", FakeNpmPlus):
             service, store = service_for(directory, {}, {})
-            store.save({"pve_local_password": "env:PVE_PSL_PASSWORD_FOR_TESTS"})
+            store.save({"pve_local_password": "env:PVE_LOCAL_PASSWORD"})
             try:
                 status = service.run_once(apply_changes=True)
             finally:
@@ -452,12 +484,12 @@ class SecretReferenceRunTests(unittest.TestCase):
             return FakeNpmPlus(name, url)
 
         with tempfile.TemporaryDirectory() as directory, \
-                mock.patch.dict(os.environ, {"NPM_DMZ_SECRET_FOR_TESTS": "from-env"}), \
+                mock.patch.dict(os.environ, {"NPM_DMZ_SECRET": "from-env"}), \
                 mock.patch("reverse_proxy_automation.service.PveScriptsLocalClient", FakePsl), \
                 mock.patch("reverse_proxy_automation.service.NpmPlusClient", factory):
             service, _ = service_for(
                 directory,
-                {"dmz": {"url": "https://dmz.example.net:81", "secret": "env:NPM_DMZ_SECRET_FOR_TESTS"}},
+                {"dmz": {"url": "https://dmz.example.net:81", "secret": "env:NPM_DMZ_SECRET"}},
                 {},
             )
             try:
@@ -476,7 +508,7 @@ class SecretReferenceRunTests(unittest.TestCase):
                 mock.patch("reverse_proxy_automation.service.NpmPlusClient", factory):
             service, _ = service_for(
                 directory,
-                {"dmz": {"url": "https://dmz.example.net:81", "secret": "env:NPM_TEST_VARIABLE_NOT_SET"}},
+                {"dmz": {"url": "https://dmz.example.net:81", "secret": "env:NPM_DMZ_SECRET"}},
                 {},
             )
             try:
@@ -484,7 +516,7 @@ class SecretReferenceRunTests(unittest.TestCase):
                     service.test_connection("dmz")
             finally:
                 service.stop()
-        self.assertIn("NPM_TEST_VARIABLE_NOT_SET", str(caught.exception))
+        self.assertIn("NPM_DMZ_SECRET", str(caught.exception))
 
 
 class SelfSignedRunTests(unittest.TestCase):

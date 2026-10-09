@@ -3,8 +3,14 @@ import ssl
 from datetime import datetime, timezone
 from http.cookiejar import CookieJar
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urljoin
-from urllib.request import HTTPCookieProcessor, HTTPSHandler, Request, build_opener
+from urllib.parse import quote, urljoin, urlsplit
+from urllib.request import (
+    HTTPCookieProcessor,
+    HTTPRedirectHandler,
+    HTTPSHandler,
+    Request,
+    build_opener,
+)
 
 
 class ApiError(RuntimeError):
@@ -70,6 +76,29 @@ def _web_page_hint(content_type, body):
 _REDIRECT_STATUSES = (301, 302, 303, 307, 308)
 
 
+class SameOriginRedirectHandler(HTTPRedirectHandler):
+    """Refuse redirects that would send a request to a different origin."""
+
+    def redirect_request(self, request, file_pointer, code, message, headers, new_url):
+        source = urlsplit(request.full_url)
+        destination = urlsplit(urljoin(request.full_url, new_url))
+
+        def origin(parsed_url):
+            scheme = parsed_url.scheme.lower()
+            port = parsed_url.port
+            if port is None:
+                port = {"http": 80, "https": 443}.get(scheme)
+            return scheme, parsed_url.hostname, port
+
+        source_origin = origin(source)
+        destination_origin = origin(destination)
+        if source_origin != destination_origin:
+            return None
+        return super().redirect_request(
+            request, file_pointer, code, message, headers, new_url
+        )
+
+
 def _redirect_hint(method, status, location):
     """The extra sentence for a redirect reply urllib refused to replay a body across.
 
@@ -122,7 +151,7 @@ class JsonClient:
     def __init__(self, base_url, verify_tls=True):
         self.base_url = base_url.rstrip("/") + "/"
         self.verify_tls = bool(verify_tls)
-        handlers = [HTTPCookieProcessor(CookieJar())]
+        handlers = [HTTPCookieProcessor(CookieJar()), SameOriginRedirectHandler()]
         if not self.verify_tls:
             handlers.append(HTTPSHandler(context=unverified_tls_context()))
         self.opener = build_opener(*handlers)
@@ -144,6 +173,7 @@ class JsonClient:
                 content_type = response.headers.get("content-type", "") if response.headers else ""
         except HTTPError as error:
             detail = error.read().decode("utf-8", errors="replace").strip()
+            error.close()
             content_type = error.headers.get("content-type", "") if error.headers else ""
             if error.code in _REDIRECT_STATUSES:
                 location = error.headers.get("location", "") if error.headers else ""

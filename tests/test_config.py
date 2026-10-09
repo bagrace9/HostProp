@@ -80,6 +80,36 @@ class NeutralInitialConfigTests(unittest.TestCase):
             validate_config(config, allow_incomplete=True)
         self.assertIn("Set the deletion limit", str(caught.exception))
 
+    def test_safety_switches_normalize_string_values_without_truthiness(self):
+        config = normalize_config({
+            "watch_enabled": "false",
+            "auto_apply": "false",
+            "delete_removed_hosts": "false",
+        })
+        self.assertEqual(
+            (config["watch_enabled"], config["auto_apply"], config["delete_removed_hosts"]),
+            (False, False, False),
+        )
+        enabled = normalize_config({
+            "watch_enabled": "true",
+            "auto_apply": "true",
+            "delete_removed_hosts": "true",
+        })
+        self.assertEqual(
+            (enabled["watch_enabled"], enabled["auto_apply"], enabled["delete_removed_hosts"]),
+            (True, True, True),
+        )
+
+    def test_saving_a_non_boolean_safety_switch_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = store_in(directory)
+            with self.assertRaisesRegex(ValueError, "watch_enabled.*true or false"):
+                store.save({"watch_enabled": "false"})
+            with self.assertRaisesRegex(ValueError, "auto_apply.*true or false"):
+                store.save({"auto_apply": "false"})
+            with self.assertRaisesRegex(ValueError, "delete_removed_hosts.*true or false"):
+                store.save({"delete_removed_hosts": "false"})
+
 
 class InstanceConfigTests(unittest.TestCase):
     def test_any_number_of_instances_can_be_mapped_by_any_number_of_vlans(self):
@@ -255,10 +285,40 @@ class SecretReferenceTests(unittest.TestCase):
         self.assertIn("NPMPlus instance 'lab' secret", str(caught.exception))
         self.assertIn("not a valid environment variable name", str(caught.exception))
 
+    def test_a_legacy_unsupported_reference_is_rejected_when_loaded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = store_in(directory)
+            store.path.write_text(
+                json.dumps({"pve_local_password": "env:APP_PASSWORD"}),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "variable assigned to this secret field"):
+                store.load()
+
     def test_the_psl_password_reference_is_validated_too(self):
         with self.assertRaises(ValueError) as caught:
             validate_config(normalize_config({"pve_local_password": "env:1BAD"}), allow_incomplete=True)
         self.assertIn("PVE Scripts Local password", str(caught.exception))
+
+    def test_secret_references_must_use_the_supported_variable_names(self):
+        with self.assertRaises(ValueError) as caught:
+            validate_config(
+                normalize_config({"pve_local_password": "env:APP_PASSWORD"}),
+                allow_incomplete=True,
+            )
+        self.assertIn("PVE_LOCAL_PASSWORD", str(caught.exception))
+        with self.assertRaises(ValueError) as caught:
+            validate_config(
+                normalize_config({"instances": {"lab": {"secret": "env:PATH"}}}),
+                allow_incomplete=True,
+            )
+        self.assertIn("NPM_<INSTANCE>_SECRET", str(caught.exception))
+        with self.assertRaises(ValueError) as caught:
+            validate_config(
+                normalize_config({"instances": {"lab": {"secret": "env:NPM_PUBLIC_SECRET"}}}),
+                allow_incomplete=True,
+            )
+        self.assertIn("variable assigned to this secret field", str(caught.exception))
 
     def test_a_well_formed_reference_passes_validation(self):
         validate_config(normalize_config({
