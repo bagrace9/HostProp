@@ -1,0 +1,525 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Proxy Host Automation</title>
+  <style>
+    :root{color-scheme:light;--ink:#202a31;--muted:#687780;--paper:#f4f6f3;--panel:#fff;--line:#d9e0dc;--green:#176c53;--green-soft:#e4f1eb;--coral:#be503e;--coral-soft:#fae9e4;--gold:#89610d;--gold-soft:#f6efd9;--shadow:0 12px 30px #263a3010}
+    *{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.5 "Segoe UI",Tahoma,sans-serif}button,input,textarea,select{font:inherit}button{cursor:pointer}header{background:#1d312d;color:white;padding:24px max(22px,calc((100vw - 1180px)/2));display:flex;align-items:center;justify-content:space-between;gap:20px;border-bottom:4px solid #84b49b}header h1{font-family:Georgia,"Times New Roman",serif;font-size:28px;font-weight:500;margin:0}header p{margin:3px 0 0;color:#c8dad2;font-size:13px}.system-badge{border:1px solid #74968a;padding:7px 11px;color:#e3f0e9;font-size:12px;white-space:nowrap}.layout{max-width:1180px;margin:24px auto;padding:0 22px 44px;display:grid;grid-template-columns:minmax(0,1.45fr) minmax(290px,.75fr);gap:18px}.main{display:grid;gap:18px;align-content:start}.side{display:grid;gap:18px;align-content:start}.panel{background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow);padding:20px}.panel h2{font-size:16px;margin:0 0 16px}.panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}.panel-head p{font-size:12px;color:var(--muted);margin:-10px 0 16px}.status-line{display:flex;gap:10px;align-items:center}.status-dot{width:10px;height:10px;border-radius:50%;background:#89959a;flex:none}.status-dot.ok{background:#258864}.status-dot.error{background:#c04d3d}.status-dot.checking{background:#d5a01a;animation:pulse 1s infinite alternate}@keyframes pulse{to{opacity:.35}}#status-message{font-weight:600}.status-meta{font-size:12px;color:var(--muted);margin:9px 0 0}.stats{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--line);margin-top:17px;padding-top:15px;gap:8px}.stat strong{display:block;font-size:22px;font-weight:600}.stat span{display:block;color:var(--muted);font-size:11px;text-transform:uppercase}.field-grid{display:grid;grid-template-columns:1fr 1fr;gap:13px}.field{display:grid;gap:5px}.field.full{grid-column:1/-1}label{font-size:12px;font-weight:650;color:#394950}.field small{font-size:11px;color:var(--muted)}input,textarea,select{width:100%;border:1px solid #cbd5d0;background:#fbfcfa;padding:9px 10px;border-radius:3px;color:var(--ink)}input:focus,textarea:focus,select:focus{outline:2px solid #73ad96;outline-offset:1px}textarea{min-height:84px;resize:vertical;font-family:Consolas,monospace;font-size:12px}.actions{display:flex;flex-wrap:wrap;gap:9px;margin-top:16px}.button{background:var(--green);border:1px solid var(--green);color:white;padding:9px 13px;border-radius:3px;font-weight:650}.button:hover{background:#105740}.button.secondary{background:white;color:var(--ink);border-color:#aebbb5}.button.warn{background:var(--coral);border-color:var(--coral)}.button:disabled{opacity:.55;cursor:wait}.switch-row{border-top:1px solid var(--line);padding-top:13px;margin-top:13px;display:flex;align-items:center;justify-content:space-between;gap:12px}.switch-row strong{font-size:13px}.switch-row span{display:block;color:var(--muted);font-size:11px}.switch{appearance:none;width:38px;height:22px;border-radius:14px;background:#b6c0bb;position:relative;padding:0;flex:none;cursor:pointer}.switch:after{content:"";position:absolute;width:16px;height:16px;border-radius:50%;background:white;left:3px;top:3px;transition:transform .16s}.switch:checked{background:var(--green)}.switch:checked:after{transform:translateX(16px)}.vlan-head,.vlan-row{display:grid;grid-template-columns:minmax(70px,.7fr) minmax(120px,1.3fr) 34px;gap:8px;align-items:center}.vlan-head{font-size:10px;color:var(--muted);text-transform:uppercase;padding-bottom:6px}.vlan-row{margin-bottom:8px}.icon-button{width:34px;height:36px;border:1px solid var(--line);background:#fff;font-size:17px;color:var(--coral)}.table-wrap{overflow:auto}.results{width:100%;border-collapse:collapse;font-size:12px}.results th,.results td{text-align:left;padding:9px 8px;border-bottom:1px solid #e8ece9;vertical-align:top}.results th{color:var(--muted);font-weight:600;text-transform:uppercase;font-size:10px}.tag{display:inline-block;padding:2px 6px;font-size:10px;font-weight:700;background:#edf1ee;color:#53635b}.tag.CREATE,.tag.UPDATE,.tag.DRY-CREATE,.tag.DRY-UPDATE{background:var(--green-soft);color:var(--green)}.tag.DELETE,.tag.DRY-DELETE{background:var(--coral-soft);color:var(--coral)}
+.tag.CONFLICT,.tag.SKIP,.tag.ERROR{background:var(--gold-soft);color:var(--gold)}.empty{color:var(--muted);font-size:13px;padding:12px 0}.note{font-size:12px;color:var(--muted);border-left:3px solid #91b7a3;padding:8px 11px;background:#f3f8f5;margin:0 0 14px}.toast{position:fixed;bottom:18px;right:18px;background:#203832;color:white;padding:11px 16px;box-shadow:var(--shadow);display:none;max-width:min(460px,calc(100vw - 36px));z-index:2}.toast.show{display:block;animation:rise .2s ease-out}@keyframes rise{from{transform:translateY(8px);opacity:.2}to{transform:none;opacity:1}}@media(max-width:850px){.layout{grid-template-columns:1fr}.side{grid-row:1}.panel{padding:16px}}@media(max-width:520px){header{align-items:flex-start;flex-direction:column}.field-grid{grid-template-columns:1fr}.field.full{grid-column:auto}.vlan-head{display:none}.vlan-row{grid-template-columns:1fr}.vlan-row .icon-button{justify-self:end}.stats{grid-template-columns:repeat(3,1fr)}}
+    .tag.managed{background:var(--green-soft);color:var(--green)}
+    .tag.adopted{background:#e7eef8;color:#33517d}
+    .tag.unmanaged{background:#edf1ee;color:#53635b}
+    .entry-actions{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
+    .entry-actions .button{padding:6px 9px;font-size:12px}
+    .entry-names{font-weight:600}
+    .entry-meta{color:var(--muted);font-size:11px}
+    .instance-head,.instance-row{display:grid;grid-template-columns:minmax(90px,.9fr) minmax(90px,1fr) minmax(140px,1.5fr) minmax(90px,1fr) minmax(90px,1fr) 82px;gap:8px;align-items:center}
+    .instance-head{font-size:10px;color:var(--muted);text-transform:uppercase;padding-bottom:6px}
+    .instance-row{margin-bottom:8px}
+    .instance-row input{width:100%;min-width:0}
+    .url-cell{display:flex;gap:6px;align-items:center}
+    .instance-row .switch{width:38px;min-width:38px}
+    .row-actions{display:flex;gap:6px;align-items:center;justify-content:flex-end}
+    .row-actions .button{padding:9px 10px;font-size:12px}
+    .note.generated-note{white-space:pre-line}
+    .vlan-group{border:1px solid var(--line);background:#fbfdfc;padding:12px 12px 4px;margin-bottom:12px}
+    .vlan-group.missing{border-color:#e7b3a8;background:var(--coral-soft)}
+    .vlan-group-head{display:flex;align-items:center;gap:9px;margin-bottom:9px}
+    .vlan-group-head .button{margin-left:auto}
+    .vlan-group-title{font-weight:600}
+    .vlan-group-meta{color:var(--muted);font-size:11px;text-transform:uppercase}
+    .vlan-group.missing .vlan-group-title,.vlan-group.missing .vlan-group-meta{color:var(--coral)}
+    @media(max-width:900px){.instance-head{display:none}.instance-row{grid-template-columns:1fr 1fr;border-top:1px solid var(--line);padding-top:8px}.instance-row .row-actions{grid-column:2;justify-self:end}}
+    @media(max-width:560px){.instance-row{grid-template-columns:1fr}.instance-row .row-actions{grid-column:auto;justify-self:start}}
+    .badges{display:flex;align-items:center;gap:8px}
+    .unsaved-chip{padding:3px 9px;border:1px solid #e2c6bf;background:#fdf1ee;color:#8a4a3c;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap}
+    .legend{display:flex;flex-wrap:wrap;gap:14px;margin:0 0 16px}
+    .legend-item{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+    .legend .tag{cursor:default}
+    .entry-badge{margin-left:6px}
+    .alias-chip{display:inline-block;margin-left:5px;padding:1px 5px;font-size:10px;font-weight:400;letter-spacing:.02em;background:#eef2f0;border:1px solid var(--line);color:var(--muted)}
+    .instance-head-row td{background:#f4f6f5;font-size:12px;color:var(--muted)}
+    .instance-head-row strong{color:var(--ink);font-size:13px}
+    .entry-row.disabled td{opacity:.55}
+    .entry-row.conflict td{background:#fdf6e8}
+    #entries.busy{opacity:.55}
+    .button.ghost{background:transparent;color:var(--coral);border-color:#e2c6bf}
+    .button.ghost:hover{background:var(--coral);border-color:var(--coral);color:#fff}
+    .tabs{display:flex;flex-wrap:wrap;gap:4px;border-bottom:1px solid var(--line);margin:0 0 18px}
+    .tab{background:transparent;border:1px solid transparent;border-bottom:none;color:var(--muted);font-weight:650;font-size:13px;padding:8px 13px;margin-bottom:-1px}
+    .tab:hover{color:var(--ink)}
+    .tab:focus-visible{outline:2px solid var(--green);outline-offset:1px}
+    .tab[aria-selected="true"]{background:var(--panel);border-color:var(--line);color:var(--ink);box-shadow:inset 0 2px 0 var(--green)}
+    .tab.dirty::after{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--gold);margin-left:7px;vertical-align:middle}
+    .toast.error{background:#7d2c20}
+
+    :root{
+      color-scheme:light;
+      --ink:#172a25;
+      --muted:#64756e;
+      --paper:#f3f6f4;
+      --panel:#fff;
+      --line:#dce6e0;
+      --green:#147553;
+      --green-soft:#e6f3ec;
+      --coral:#b94d3a;
+      --coral-soft:#fbece8;
+      --gold:#89610d;
+      --gold-soft:#fbf4df;
+      --shadow:0 10px 28px #1b352b0a,0 2px 6px #1b352b08;
+    }
+
+    body{
+      min-height:100vh;
+      background:
+        radial-gradient(ellipse at 16% 0%,#e8f1eb 0,transparent 34rem),
+        var(--paper);
+      color:var(--ink);
+      font-family:Inter,"Segoe UI",system-ui,-apple-system,sans-serif;
+      font-size:14px;
+      line-height:1.55;
+    }
+
+    header{
+      position:relative;
+      overflow:hidden;
+      padding:30px max(24px,calc((100vw - 1320px)/2));
+      background:linear-gradient(115deg,#163b30,#214b3b 58%,#285641);
+      border:0;
+      box-shadow:0 6px 24px #17392e18;
+    }
+    header::after{
+      position:absolute;
+      top:-110px;
+      right:8%;
+      width:290px;
+      height:290px;
+      border:1px solid #ffffff18;
+      border-radius:50%;
+      box-shadow:0 0 0 34px #ffffff08,0 0 0 70px #ffffff06;
+      content:"";
+      pointer-events:none;
+    }
+    header h1{
+      position:relative;
+      z-index:1;
+      font-family:Inter,"Segoe UI",system-ui,sans-serif;
+      font-size:clamp(22px,3vw,29px);
+      font-weight:700;
+      letter-spacing:-.035em;
+    }
+    header p{position:relative;z-index:1;margin-top:5px;color:#c5d9ce;font-size:13px}
+    .badges{position:relative;z-index:1;gap:10px}
+    .system-badge{
+      border:1px solid #ffffff38;
+      border-radius:999px;
+      padding:7px 12px;
+      background:#ffffff0d;
+      color:#e3f0e9;
+      font-weight:600;
+    }
+    .unsaved-chip{border-radius:999px}
+
+    .layout{
+      max-width:1368px;
+      margin:30px auto;
+      padding:0 28px 56px;
+      grid-template-columns:minmax(0,1.65fr) minmax(310px,.8fr);
+      gap:22px;
+    }
+    .main,.side{gap:22px}
+    .side{align-content:start}
+    .side>.panel:first-child{position:sticky;top:20px}
+    .panel{
+      min-width:0;
+      padding:25px;
+      border:1px solid #e0e9e4;
+      border-radius:14px;
+      box-shadow:var(--shadow);
+    }
+    .panel h2{
+      margin-bottom:15px;
+      font-size:17px;
+      font-weight:700;
+      letter-spacing:-.02em;
+    }
+    .panel-head{align-items:center;gap:18px}
+    .panel-head p{max-width:740px;margin:-8px 0 17px;font-size:12px;line-height:1.6}
+    .note{
+      margin-bottom:19px;
+      padding:12px 14px;
+      border:1px solid #d8e9df;
+      border-left:3px solid #3e9871;
+      border-radius:8px;
+      background:#f3f9f5;
+      line-height:1.6;
+    }
+
+    .tabs{
+      display:grid;
+      grid-template-columns:repeat(4,minmax(0,1fr));
+      gap:5px;
+      margin:0 0 23px;
+      padding:5px;
+      border:1px solid #e4ebe7;
+      border-radius:10px;
+      background:#f3f6f4;
+    }
+    .tab{
+      min-height:40px;
+      margin:0;
+      padding:8px 12px;
+      border:0;
+      border-radius:7px;
+      color:#63756d;
+      font-size:13px;
+      transition:background .15s ease,color .15s ease,box-shadow .15s ease;
+    }
+    .tab:hover{background:#e9efeb;color:var(--ink)}
+    .tab[aria-selected="true"]{
+      background:#fff;
+      color:var(--green);
+      box-shadow:0 1px 4px #1b352b14;
+    }
+    .tab[aria-selected="true"]:hover{background:#fff}
+    .tab:focus-visible{outline:2px solid #3e9871;outline-offset:2px}
+    .tab.dirty::after{background:#c08b1f}
+
+    .field-grid{gap:17px 18px}
+    .field{gap:7px}
+    label{color:#34483f;font-size:12px}
+    .field small{font-size:11px;line-height:1.5}
+    input,textarea,select{
+      min-height:42px;
+      padding:10px 12px;
+      border:1px solid #d2ded7;
+      border-radius:8px;
+      background:#fbfcfb;
+      transition:border-color .15s ease,box-shadow .15s ease,background .15s ease;
+    }
+    input:hover,textarea:hover,select:hover{border-color:#a9c0b3}
+    input:focus,textarea:focus,select:focus{
+      outline:none;
+      border-color:#4b9a75;
+      background:#fff;
+      box-shadow:0 0 0 3px #4b9a751c;
+    }
+    textarea{min-height:92px}
+    .actions{gap:9px;margin-top:20px}
+    .button{
+      min-height:39px;
+      padding:9px 15px;
+      border-radius:8px;
+      box-shadow:0 1px 2px #18382b0a;
+      transition:transform .15s ease,background .15s ease,border-color .15s ease,box-shadow .15s ease;
+    }
+    .button:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 4px 10px #18382b16}
+    .button:active:not(:disabled){transform:translateY(0)}
+    .button.secondary{
+      background:#fff;
+      border-color:#d2ded7;
+      color:#30463b;
+    }
+    .button.secondary:hover:not(:disabled){background:#f5f8f6;border-color:#a9c0b3}
+    .button.warn{background:#b64735;border-color:#b64735}
+    .button.warn:hover:not(:disabled){background:#9f392a}
+    .button.ghost{border-radius:7px}
+    .button:focus-visible,.icon-button:focus-visible{outline:3px solid #55a47c55;outline-offset:2px}
+    .button:disabled{box-shadow:none}
+
+    .switch-row{
+      margin-top:16px;
+      padding-top:16px;
+      border-color:#e8eeea;
+    }
+    .switch-row strong{font-size:13px}
+    .switch-row span{margin-top:2px;line-height:1.5}
+    .switch{min-height:22px;height:22px;border:0;border-radius:999px}
+    .switch:focus-visible{outline:3px solid #55a47c55;outline-offset:2px}
+    .switch:checked{background:#23845f}
+
+    .status-line{gap:11px}
+    .status-dot{width:11px;height:11px;box-shadow:0 0 0 4px #89959a18}
+    .status-dot.ok{box-shadow:0 0 0 4px #2588641a}
+    .status-dot.error{box-shadow:0 0 0 4px #c04d3d1a}
+    .status-dot.checking{box-shadow:0 0 0 4px #d5a01a1a}
+    #status-message{font-size:15px}
+    .status-meta{line-height:1.6}
+    .stats{
+      margin-top:19px;
+      padding-top:0;
+      border:0;
+      gap:8px;
+    }
+    .stat{
+      min-width:0;
+      padding:12px 10px;
+      border:1px solid #e5ece8;
+      border-radius:9px;
+      background:#f7f9f8;
+    }
+    .stat strong{font-size:23px;letter-spacing:-.035em}
+    .stat span{font-size:9px;letter-spacing:.055em}
+    #preview-now,#apply-now{flex:1 1 auto}
+
+    .vlan-group{
+      margin-bottom:14px;
+      padding:15px 15px 7px;
+      border:1px solid #e1e9e4;
+      border-radius:10px;
+      background:#fafcfb;
+    }
+    .vlan-group.missing{border-color:#e7c1b8;background:#fff7f5}
+    .vlan-group-head{flex-wrap:wrap;gap:8px 10px}
+    .vlan-group-title{font-size:14px}
+    .vlan-group-meta{font-size:10px;letter-spacing:.045em}
+    .vlan-group-head .button{margin-left:auto}
+    .vlan-row{gap:10px}
+    .icon-button{border-radius:8px}
+    .instance-row{gap:10px}
+
+    .table-wrap{
+      overflow:auto;
+      border:1px solid #e7ede9;
+      border-radius:9px;
+      background:#fff;
+    }
+    .results{font-size:12px}
+    .results th,.results td{padding:11px 12px;border-bottom-color:#edf1ee}
+    .results th{
+      position:sticky;
+      top:0;
+      background:#f7f9f8;
+      font-size:10px;
+      letter-spacing:.045em;
+    }
+    .results tbody tr:last-child td{border-bottom:0}
+    .results tbody tr:hover td{background:#fbfdfc}
+    .instance-head-row td{background:#f3f7f4}
+    .entry-row.conflict td{background:#fff9eb}
+    .entry-row.conflict:hover td{background:#fff6e3}
+    .tag{padding:3px 8px;border-radius:999px;font-size:10px;letter-spacing:.015em}
+    .empty{padding:18px 14px}
+    .legend{gap:8px 16px;margin:0 0 17px}
+    .legend-item{font-size:11px}
+    .alias-editor{display:grid;gap:7px;min-width:240px}
+    .alias-list{display:flex;flex-wrap:wrap;gap:5px}
+    .alias-chip-editor{display:inline-flex;align-items:center;gap:5px;padding:3px 5px 3px 8px;border:1px solid #dce6e0;border-radius:999px;background:#f4f8f5;color:#40564a;font-size:11px;line-height:1.4}
+    .alias-chip-editor button{display:grid;width:18px;height:18px;place-items:center;padding:0;border:0;border-radius:50%;background:transparent;color:#7d554c;font-size:14px;line-height:1}
+    .alias-chip-editor button:hover{background:#fbece8;color:#9f392a}
+    .alias-entry-controls{display:flex;align-items:center;gap:6px}
+    .alias-editor input{min-width:0;min-height:36px;padding:7px 9px;font-size:12px}
+    .alias-entry-controls .button,.alias-editor>.button{min-height:36px;padding:7px 10px;font-size:11px}
+    #panel-hosts .results{min-width:850px}
+    .toast{
+      right:24px;
+      bottom:24px;
+      padding:13px 17px;
+      border:1px solid #ffffff18;
+      border-radius:10px;
+      box-shadow:0 12px 32px #14251f38;
+    }
+
+    @media(max-width:1000px){
+      .layout{grid-template-columns:1fr;max-width:820px}
+      .side{grid-row:1}
+      .side>.panel:first-child{position:static}
+    }
+    @media(max-width:700px){
+      header{padding:23px 20px}
+      .layout{margin:20px auto;padding:0 16px 36px;gap:16px}
+      .main,.side{gap:16px}
+      .panel{padding:20px;border-radius:12px}
+      .panel-head{align-items:flex-start}
+      .panel-head p{margin-top:-7px}
+    }
+    @media(max-width:560px){
+      header{gap:14px}
+      header::after{right:-145px}
+      .badges{align-items:flex-start;flex-direction:column;gap:7px}
+      .system-badge{font-size:10px}
+      .unsaved-chip{font-size:9px}
+      .layout{margin-top:14px;padding-right:12px;padding-left:12px}
+      .panel{padding:17px}
+      .tabs{gap:3px;padding:4px}
+      .tab{min-height:38px;padding:7px 6px;font-size:12px}
+      .panel-head{gap:10px}
+      .panel-head>.button{flex:none;padding:8px 10px;font-size:11px}
+      .field-grid{gap:14px}
+      .vlan-group{padding:12px 11px 6px}
+      .vlan-group-head .button{margin-left:0}
+      .results{min-width:520px}
+      #panel-hosts .results{min-width:780px}
+      .tabs{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .results th,.results td{padding:10px}
+      .stats{gap:6px}
+      .stat{padding:10px 7px}
+      .stat span{font-size:8px}
+      #preview-now,#apply-now{flex:1 1 100%}
+      .toast{right:12px;bottom:12px}
+    }
+    @media(prefers-reduced-motion:reduce){
+      *,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div><h1>Proxy Host Automation</h1><p>PVE Scripts Local to NPMPlus, with VLAN-aware routing</p></div>
+    <div class="badges"><span class="unsaved-chip" id="unsaved" hidden>Unsaved changes</span><div class="system-badge" id="system-badge">VLAN-aware split DNS</div></div>
+  </header>
+  <div class="layout">
+    <main class="main">
+      <section class="panel">
+        <div class="tabs" role="tablist" aria-label="Dashboard sections">
+          <button class="tab" type="button" role="tab" id="tab-psl" data-tab="psl" aria-controls="panel-psl" aria-selected="true">PSL</button>
+          <button class="tab" type="button" role="tab" id="tab-npm" data-tab="npm" aria-controls="panel-npm" aria-selected="false" tabindex="-1">NPMPlus</button>
+          <button class="tab" type="button" role="tab" id="tab-vlan" data-tab="vlan" aria-controls="panel-vlan" aria-selected="false" tabindex="-1">VLAN routing</button>
+          <button class="tab" type="button" role="tab" id="tab-hosts" data-tab="hosts" aria-controls="panel-hosts" aria-selected="false" tabindex="-1">Host management</button>
+        </div>
+        <div class="tab-panel" id="panel-psl" role="tabpanel" aria-labelledby="tab-psl">
+          <div class="panel-head"><div><h2>PVE Scripts Local</h2><p>The installed guests, their VLAN tags and their web UI ports are read from here.</p></div></div>
+          <div class="note">The saved password is write-only in this page: leaving it blank keeps the value this machine already has, and it may instead be an environment reference such as <code>env:PVE_LOCAL_PASSWORD</code>, which is read from the dashboard's environment and never stored here.</div>
+          <div class="field-grid">
+            <div class="field full"><label for="pve-url">PVE Scripts Local URL</label><input id="pve-url"></div>
+            <div class="field"><label for="pve-user">PSL username</label><input id="pve-user" autocomplete="username"></div>
+            <div class="field"><label for="pve-pass">PSL password</label><input id="pve-pass" type="password" autocomplete="new-password" placeholder="Not configured" title="Type the password, or env:VAR_NAME to read it from the dashboard's environment."></div>
+            <div class="field"><label for="poll-interval">Check interval (seconds)</label><input id="poll-interval" type="number" min="30" max="86400"><small>Required when Watch PSL is enabled; each check refreshes container config and detects endpoints. For a typical home setup, start at 300 seconds (5 minutes); choose 30–86400 seconds.</small></div>
+            <div class="field"><label for="excluded-hosts">Excluded guest hostnames</label><input id="excluded-hosts"><small>Comma-separated. Only names listed here are excluded; routing an admin UI may expose it or create a proxy loop.</small></div>
+          </div>
+          <div class="switch-row"><div><strong>PSL certificate is self-signed</strong><span>Turn on when the PSL https:// URL uses a certificate this machine does not trust.</span></div><input class="switch" type="checkbox" id="pve-insecure" aria-label="PSL certificate is self-signed: skip the TLS certificate check"></div>
+          <div class="actions"><button class="button" id="save-config">Save PSL settings</button><button class="button secondary" data-test="pve">Test PSL</button></div>
+        </div>
+        <div class="tab-panel" id="panel-npm" role="tabpanel" aria-labelledby="tab-npm" hidden>
+          <div class="panel-head"><div><h2>NPMPlus instances</h2><p>Every NPMPlus this app may write to, and the public names it creates there.</p></div><button class="button secondary" id="add-instance">＋ Add instance</button></div>
+          <div class="note">Saved API secrets are write-only in this page: leaving a secret blank keeps the value this machine already has, and it may instead be an environment reference such as <code>env:NPM_LAB_SECRET</code>, which is read from the dashboard's environment and never stored here. Turn on <strong>self-signed</strong> for an endpoint whose <code>https://</code> certificate this machine does not trust: the TLS certificate check is then skipped for that instance only, and every other instance keeps verifying.</div>
+          <div class="field-grid">
+            <div class="field"><label for="public-domain">Public hostname domain</label><input id="public-domain"></div>
+            <div class="field"><label for="max-deletes">Max deletions per run</label><input id="max-deletes" type="number" min="1" max="1000"><small>Required when Delete removed guests is enabled; a run that would delete more deletes nothing.</small></div>
+          </div>
+          <div class="instance-head"><span>Name</span><span>Label</span><span>URL / self-signed</span><span>Identity</span><span>Secret or env:VAR</span><span></span></div>
+          <div id="instance-rows"></div>
+          <div class="actions"><button class="button" id="save-instances">Save NPMPlus settings</button></div>
+        </div>
+        <div class="tab-panel" id="panel-vlan" role="tabpanel" aria-labelledby="tab-vlan" hidden>
+          <div class="panel-head"><div><h2>VLAN routing</h2><p>Each NPMPlus instance has a card here; add every Proxmox VLAN tag it serves and the DNS zone it resolves.</p></div></div>
+          <div class="vlan-head"><span>VLAN tag</span><span>Guest DNS zone</span><span></span></div>
+          <div id="vlan-groups"></div>
+          <div class="actions"><button class="button" id="save-vlans">Save VLAN routing</button></div>
+        </div>
+        <div class="tab-panel" id="panel-hosts" role="tabpanel" aria-labelledby="tab-hosts" hidden>
+          <div class="panel-head"><div><h2>Host management</h2><p>Manage each NPMPlus entry independently. Adopt lets a matching guest update a host; release leaves it alone. Alias and port overrides take effect on the next preview or apply. Leave the port override blank to use PSL detection.</p></div><button class="button secondary" id="refresh-entries">Reload entries</button></div>
+          <div class="legend">
+            <div class="legend-item"><span class="tag managed">managed</span>created here, kept in step</div>
+            <div class="legend-item"><span class="tag adopted">adopted</span>matched to a guest, updated but never deleted</div>
+            <div class="legend-item"><span class="tag unmanaged">unmanaged</span>left alone by this app</div>
+          </div>
+          <div class="table-wrap"><table class="results"><thead><tr><th>Ownership</th><th>Entry</th><th>Upstream / port override</th><th>Aliases for this guest</th><th>Actions</th></tr></thead><tbody id="entries"><tr><td colspan="5" class="empty">Loading entries…</td></tr></tbody></table></div>
+          <div class="panel-head"><div><h2>Latest PSL plan</h2><p>Preview shows the records this app would create or update, plus records it skipped. It does not create NPMPlus entries; use Apply to write changes.</p></div></div>
+          <div class="table-wrap"><table class="results"><thead><tr><th>Result</th><th>Guest / hostname</th><th>NPMPlus / details</th></tr></thead><tbody id="plan-entries"><tr><td colspan="3" class="empty">Run Preview now to see PSL records and skip reasons.</td></tr></tbody></table></div>
+        </div>
+      </section>
+    </main>
+    <aside class="side">
+      <section class="panel">
+        <h2>Watcher status</h2>
+        <div class="status-line"><span class="status-dot" id="status-dot"></span><span id="status-message">Loading status…</span></div>
+        <p class="status-meta" id="status-meta">Waiting for dashboard.</p>
+        <div class="stats"><div class="stat"><strong id="guest-count">–</strong><span>PSL guests</span></div><div class="stat"><strong id="planned-count">–</strong><span>Planned</span></div><div class="stat"><strong id="attention-count">–</strong><span>Attention</span></div></div>
+        <div class="switch-row"><div><strong>Watch PSL</strong><span>Poll for guest and port changes.</span></div><input class="switch" type="checkbox" id="watch-enabled" aria-label="Watch PSL: poll for guest and port changes"></div>
+        <div class="switch-row"><div><strong>Automatically apply</strong><span>When off, watcher only previews changes.</span></div><input class="switch" type="checkbox" id="auto-apply" aria-label="Automatically apply changes the watcher finds"></div>
+        <div class="switch-row"><div><strong>Delete removed guests</strong><span>Remove only hosts this app created when the guest leaves PSL. Off until explicitly enabled.</span></div><input class="switch" type="checkbox" id="delete-removed" aria-label="Delete hosts this app created when their guest leaves PSL"></div>
+        <div class="actions"><button class="button secondary" id="preview-now">Preview now</button><button class="button warn" id="apply-now">Apply now</button></div>
+      </section>
+      <section class="panel"><h2>What gets generated</h2><div id="generated"></div><p class="status-meta">Shown for the saved settings. Your split-DNS records must send each VLAN to the NPMPlus instance you mapped it to, and a matching certificate has to be installed on that instance.</p></section>
+    </aside>
+  </div>
+  <div class="toast" id="toast" role="status"></div>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const fields = {pve_local_url:"pve-url",pve_local_username:"pve-user",public_domain:"public-domain",poll_interval_seconds:"poll-interval",excluded_guest_hostnames:"excluded-hosts",max_deletes_per_run:"max-deletes"};
+    let toastTimer;let latestStatus=null,lastCheckKey=null,entriesBusy=false,entriesPending=false,formSnapshot=null,panelSnapshots=null;
+    function toast(message,kind){const node=$("toast");node.textContent=message||"Done";node.classList.toggle("error",kind==="error");node.classList.add("show");node.onclick=()=>node.classList.remove("show");clearTimeout(toastTimer);if(kind==="error")return;toastTimer=setTimeout(()=>node.classList.remove("show"),3600)}
+    async function api(path,body){
+      if(location.protocol==="file:")throw new Error("This page was opened as a local file. Start the dashboard and open http://127.0.0.1:8088/ instead; opening index.html directly cannot reach the dashboard API.");
+      let response;
+      try{response=await fetch(path,{method:body?"POST":"GET",headers:body?{"content-type":"application/json"}:{},body:body?JSON.stringify(body):undefined})}
+      catch(error){throw new Error(`Could not reach the dashboard API at ${path}: ${error.message}. Make sure the dashboard is running.`)}
+      const raw=await response.text();
+      let data;
+      try{data=raw?JSON.parse(raw):{}}
+      catch{const detail=raw.trim().slice(0,180);throw new Error(`Dashboard API returned a non-JSON response (HTTP ${response.status})${detail?`: ${detail}`:"."}`)}
+      if(!response.ok)throw new Error(data.error||`Request failed: ${response.status}`);
+      return data
+    }
+    function instanceName(row){return row.querySelector(".instance-name").value.trim().toLowerCase()}
+    function instanceNames(){return [...$("instance-rows").children].map(instanceName).filter(Boolean)}
+    function instanceDisplay(name){for(const row of $("instance-rows").children){if(instanceName(row)===name)return row.querySelector(".instance-label").value.trim()||name}return name}
+    function textInput(className,label,placeholder){const input=document.createElement("input");input.className=className;input.setAttribute("aria-label",label);if(placeholder)input.placeholder=placeholder;return input}
+    function secretEnvReference(value){const text=(value||"").trim();return text.slice(0,4).toLowerCase()==="env:"?text.slice(4).trim():""}
+    function paintSecretInput(input){const typed=secretEnvReference(input.value);const saved=input.dataset.secretEnv||"";const configured=input.dataset.secretConfigured==="1";input.type=typed?"text":"password";input.placeholder=typed?"Environment variable reference":saved?(configured?`From ${saved}`:`${saved} is not set`):(configured?"Saved \u00b7 blank keeps it":"Not configured")}
+    function secretField(input,envName,configured){input.dataset.secretEnv=envName||"";input.dataset.secretConfigured=configured?"1":"0";input.title="Type the password, or env:VAR_NAME to read it from the dashboard's environment.";if(!input.dataset.secretWired){input.dataset.secretWired="1";input.addEventListener("input",()=>paintSecretInput(input))}paintSecretInput(input);return input}
+    function renameVlanGroup(row,previous,next){if(!previous||!next||previous===next)return;const rowList=[...$("instance-rows").children];if(rowList.some(other=>other!==row&&instanceName(other)===next))return;const host=$("vlan-groups");if([...host.children].some(group=>group.dataset.instance===next))return;for(const group of host.children){if(group.dataset.instance===previous)group.dataset.instance=next}}
+    function vlanGroup(instance){const host=$("vlan-groups");for(const group of host.children){if(group.dataset.instance===instance)return group}const group=document.createElement("div");group.className="vlan-group";group.dataset.instance=instance;const head=document.createElement("div");head.className="vlan-group-head";const title=document.createElement("span");title.className="vlan-group-title";const meta=document.createElement("span");meta.className="vlan-group-meta";const add=document.createElement("button");add.className="button secondary vlan-add";add.type="button";add.textContent="\uFF0B Add VLAN";add.onclick=()=>vlanRow(group);const drop=document.createElement("button");drop.className="button secondary vlan-drop";drop.type="button";drop.textContent="Delete these VLAN rows";drop.onclick=()=>{group.remove();refreshVlanGroups()};head.append(title,meta,add,drop);const rows=document.createElement("div");rows.className="vlan-group-rows";group.append(head,rows);host.appendChild(group);return group}
+    function paintVlanGroup(group,names){const instance=group.dataset.instance;const live=names.includes(instance);const count=group.querySelectorAll(".vlan-row").length;group.classList.toggle("missing",!live);group.querySelector(".vlan-group-title").textContent=live?instanceDisplay(instance):`${instance} (no instance row)`;group.querySelector(".vlan-group-meta").textContent=live?(count?`${count} VLAN tag${count===1?"":"s"}`:"No VLAN tag yet"):"Add the instance back or delete these rows";group.querySelector(".vlan-add").hidden=!live;group.querySelector(".vlan-drop").hidden=live}
+    function paintVlanEmpty(names){const host=$("vlan-groups");const existing=host.querySelector(".empty-vlans");if(!names.length&&!host.querySelectorAll(".vlan-group").length){if(!existing){const note=document.createElement("p");note.className="empty empty-vlans";note.textContent="Add an NPMPlus instance on the NPMPlus tab; each instance gets its own card here.";host.appendChild(note)}}else if(existing)existing.remove()}
+    function refreshVlanGroups(){const rowList=[...$("instance-rows").children];const names=rowList.map(instanceName).filter(Boolean);for(const row of rowList){const input=row.querySelector(".instance-name");const key=instanceName(row);if(input.dataset.instanceKey&&key&&key!==input.dataset.instanceKey)renameVlanGroup(row,input.dataset.instanceKey,key);input.dataset.instanceKey=key}for(const name of names)vlanGroup(name);for(const group of [...$("vlan-groups").children]){if(group.dataset.instance===undefined)continue;const live=names.includes(group.dataset.instance);if(!live&&!group.querySelectorAll(".vlan-row").length)group.remove();else paintVlanGroup(group,names)}paintVlanEmpty(names)}
+    function instanceRow(name="",label="",url="",identity="",secretConfigured=false,secretEnv="",verifyTls=true){const row=document.createElement("div");row.className="instance-row";const nameInput=textInput("instance-name","NPMPlus instance name");nameInput.value=name;nameInput.dataset.instanceKey=name.trim().toLowerCase();const labelInput=textInput("instance-label","NPMPlus instance label");labelInput.value=label;const urlInput=textInput("instance-url","NPMPlus instance URL");urlInput.value=url;const verifyInput=document.createElement("input");verifyInput.type="checkbox";verifyInput.className="switch instance-verify";verifyInput.checked=verifyTls===false;verifyInput.title="Allow a self-signed certificate: skip the TLS certificate check for this instance's URL only";verifyInput.setAttribute("aria-label","Allow a self-signed certificate for this instance URL");const urlCell=document.createElement("div");urlCell.className="url-cell";urlCell.append(urlInput,verifyInput);const identityInput=textInput("instance-identity","NPMPlus instance identity","");identityInput.value=identity;const secretInput=textInput("instance-secret","NPMPlus instance secret","");secretField(secretInput,secretEnv,secretConfigured);const actions=document.createElement("div");actions.className="row-actions";const test=document.createElement("button");test.className="button secondary";test.type="button";test.textContent="Test";test.onclick=async()=>{test.disabled=true;try{await saveConfig();toast((await api("/api/test",{target:instanceName(row)})).message)}catch(error){toast(error.message,"error")}finally{test.disabled=false}};const remove=document.createElement("button");remove.className="icon-button";remove.type="button";remove.title="Remove instance";remove.setAttribute("aria-label","Remove instance");remove.textContent="×";remove.onclick=()=>{row.remove();refreshVlanGroups()};actions.append(test,remove);nameInput.oninput=refreshVlanGroups;labelInput.oninput=refreshVlanGroups;row.append(nameInput,labelInput,urlCell,identityInput,secretInput,actions);$("instance-rows").appendChild(row);return row}
+    function getInstances(){const instances={};for(const row of $("instance-rows").children){const name=instanceName(row);if(!name)continue;if(name in instances)throw new Error(`Two NPMPlus instance rows both use the name '${name}'`);instances[name]={label:row.querySelector(".instance-label").value.trim(),url:row.querySelector(".instance-url").value.trim(),identity:row.querySelector(".instance-identity").value.trim(),secret:row.querySelector(".instance-secret").value,verify_tls:!row.querySelector(".instance-verify").checked}}return instances}
+    function vlanRow(group,tag="",zone=""){const row=document.createElement("div");row.className="vlan-row";const tagInput=document.createElement("input");tagInput.className="tag-input";tagInput.inputMode="numeric";tagInput.setAttribute("aria-label","VLAN tag");tagInput.placeholder="VLAN tag";tagInput.value=tag;const zoneInput=document.createElement("input");zoneInput.className="zone zone-input";zoneInput.setAttribute("aria-label","Guest DNS zone");zoneInput.placeholder="Guest DNS zone";zoneInput.value=zone;const remove=document.createElement("button");remove.className="icon-button remove-vlan";remove.type="button";remove.title="Remove VLAN";remove.setAttribute("aria-label","Remove VLAN");remove.textContent="×";remove.onclick=()=>{row.remove();refreshVlanGroups()};row.append(tagInput,zoneInput,remove);group.querySelector(".vlan-group-rows").appendChild(row);refreshVlanGroups();return row}
+    function getVlanMap(){const map={};const names=instanceNames();const problems=[];for(const group of $("vlan-groups").children){const instance=group.dataset.instance;if(instance===undefined)continue;for(const row of group.querySelectorAll(".vlan-row")){const tag=row.querySelector(".tag-input").value.trim();const zone=row.querySelector(".zone-input").value.trim();if(!tag&&!zone)continue;if(!tag){problems.push(`A VLAN row for ${instance} has a guest DNS zone but no VLAN tag; fill in the tag or remove the row.`);continue}if(!names.includes(instance)){problems.push(`VLAN ${tag} is still mapped to NPMPlus instance '${instance}', which has no instance row; add the instance back or delete that VLAN row.`);continue}if(!zone){problems.push(`VLAN ${tag} has no guest DNS zone; fill it in or remove the row.`);continue}if(tag in map){problems.push(`VLAN ${tag} is mapped twice; each VLAN tag may point at one NPMPlus instance.`);continue}map[tag]={instance,zone}}}if(problems.length)throw new Error(problems.join(" "));return map}
+    function renderStatus(status){$("status-message").textContent=status.message||"No status available";$("status-dot").className=`status-dot ${status.state||""}`;$("guest-count").textContent=status.guest_count??"–";$("planned-count").textContent=(status.planned||[]).filter(row=>row.status.startsWith("DRY-")||row.status==="CREATE"||row.status==="UPDATE"||row.status==="DELETE").length;$("attention-count").textContent=(status.skipped||[]).length;const time=status.last_check?new Date(status.last_check).toLocaleString():"Not checked yet";const applied=status.last_apply?` · Last applied ${new Date(status.last_apply).toLocaleString()}`:"";const timings=status.timings||{};const timingSummary=Number.isFinite(timings.psl_read_seconds)?` · PSL ${timings.psl_read_seconds.toFixed(2)}s / ${timings.source_records} records · planning ${timings.planning_seconds.toFixed(2)}s · NPMPlus ${timings.npmplus_seconds.toFixed(2)}s`:"";$("status-meta").textContent=`Last check: ${time}${applied}${timingSummary}`;latestStatus=status;renderPlan(status);const checkKey=status.last_check||null;if(checkKey&&checkKey!==lastCheckKey){lastCheckKey=checkKey;loadEntries()}}
+    function entryCellActions(entry){const actions=document.createElement("div");actions.className="entry-actions";const adopting=entry.ownership==="unmanaged";const toggle=document.createElement("button");toggle.className="button secondary";toggle.type="button";toggle.textContent=adopting?"Adopt":"Release";toggle.title=adopting?"Let a matching guest update this entry":"Stop managing this entry";toggle.onclick=()=>changeOwnership(entry,adopting?"adopt":"release",toggle);const drop=document.createElement("button");drop.className="button ghost";drop.type="button";drop.textContent="Delete";drop.title="Delete this entry from NPMPlus now";drop.onclick=()=>removeEntry(entry,drop);actions.append(toggle,drop);return actions}
+    function addAliasChip(list,value){const name=value.trim();if(!name)return;const duplicate=[...list.querySelectorAll("[data-alias]")].some(chip=>chip.dataset.alias.toLowerCase()===name.toLowerCase());if(duplicate)return;const chip=document.createElement("span");chip.className="alias-chip-editor";chip.dataset.alias=name;const label=document.createElement("span");label.textContent=name;const remove=document.createElement("button");remove.type="button";remove.textContent="×";remove.setAttribute("aria-label",`Remove alias ${name}`);remove.onclick=()=>chip.remove();chip.append(label,remove);list.appendChild(chip)}
+    async function saveEntryAliases(entry,list,button){const aliases=[...list.querySelectorAll("[data-alias]")].map(chip=>chip.dataset.alias);button.disabled=true;try{const result=await api("/api/entries/aliases",{instance:entry.instance,host_id:entry.id,aliases});toast(result.message);await loadEntries()}catch(error){toast(error.message,"error")}finally{button.disabled=false}}
+    async function saveEntryPort(entry,input,button){const raw=input.value.trim();const port=raw===""?null:Number(raw);button.disabled=true;try{const result=await api("/api/entries/port",{instance:entry.instance,host_id:entry.id,port});toast(result.message);await loadEntries()}catch(error){toast(error.message,"error")}finally{button.disabled=false}}
+    async function changeOwnership(entry,action,button){if(action==="release"&&entry.ownership==="managed"){const released=(entry.domain_names||[]).join(", ")||`host ${entry.id}`;if(!confirm(`Release ${released} on ${entry.label}?\n\nThis app stops maintaining it: it is no longer updated, and the next run reports a conflict for this name until you adopt the entry again, exclude the guest, or delete the entry.`))return}button.disabled=true;try{const result=await api("/api/entries/ownership",{instance:entry.instance,host_id:entry.id,action});toast(result.message);await loadEntries()}catch(error){toast(error.message,"error")}finally{button.disabled=false}}
+    async function removeEntry(entry,button){const names=(entry.domain_names||[]).join(", ")||`host ${entry.id}`;if(!confirm(`Delete ${names} from ${entry.label}?\n\nThis removes the entry from NPMPlus now. An entry this app manages is created again by the next apply while its guest is still in PSL; release it first to keep it away.`))return;button.disabled=true;try{const result=await api("/api/entries/delete",{instance:entry.instance,host_id:entry.id});toast(result.message);await loadEntries()}catch(error){toast(error.message,"error")}finally{button.disabled=false}}
+    function entryRow(entry){const tr=document.createElement("tr");tr.className="entry-row";const tag=document.createElement("span");tag.className=`tag ${entry.ownership}`;tag.textContent=entry.ownership;const first=document.createElement("td");first.appendChild(tag);const badge=entryStatusBadge(entry);if(badge)first.appendChild(badge);const second=document.createElement("td");const names=document.createElement("div");names.className="entry-names";paintEntryNames(names,entry);const meta=document.createElement("div");meta.className="entry-meta";meta.textContent=[`host ${entry.id}`,entry.enabled?"":"disabled"].filter(Boolean).join(" \\u00b7 ");second.append(names,meta);const third=document.createElement("td");const upstream=document.createElement("div");upstream.textContent=`${entry.forward_scheme}://${entry.forward_host}:${entry.forward_port}`;const portControls=document.createElement("div");portControls.className="alias-entry-controls";const portInput=textInput("entry-port",`Port override for ${entry.guest_hostname||entry.domain_names?.[0]||`host ${entry.id}`}`,`Detected: ${entry.forward_port}`);portInput.type="number";portInput.min="1";portInput.max="65535";portInput.step="1";portInput.inputMode="numeric";portInput.value=entry.port_override??"";const portSave=document.createElement("button");portSave.className="button secondary";portSave.type="button";portSave.textContent="Save port";portSave.title="Save a port override, or clear it to use PSL detection";portSave.onclick=()=>saveEntryPort(entry,portInput,portSave);portControls.append(portInput,portSave);third.append(upstream,portControls);const aliasCell=document.createElement("td");const aliasEditor=document.createElement("div");aliasEditor.className="alias-editor";const aliasList=document.createElement("div");aliasList.className="alias-list";for(const alias of entry.aliases||[])addAliasChip(aliasList,alias);const aliasControls=document.createElement("div");aliasControls.className="alias-entry-controls";const aliasInput=textInput("entry-aliases",`Add aliases for ${entry.guest_hostname||entry.domain_names?.[0]||`host ${entry.id}`}`,"Alias or hostname");const addAlias=document.createElement("button");addAlias.className="button secondary";addAlias.type="button";addAlias.textContent="Add alias";const addTypedAliases=()=>{const names=aliasInput.value.split(",").map(name=>name.trim()).filter(Boolean);for(const name of names)addAliasChip(aliasList,name);aliasInput.value=""};addAlias.onclick=addTypedAliases;aliasInput.onkeydown=event=>{if(event.key==="Enter"){event.preventDefault();addTypedAliases()}};aliasControls.append(aliasInput,addAlias);const aliasSave=document.createElement("button");aliasSave.className="button secondary";aliasSave.type="button";aliasSave.textContent="Save aliases";aliasSave.title="Save aliases for this guest";aliasSave.onclick=()=>saveEntryAliases(entry,aliasList,aliasSave);aliasEditor.append(aliasList,aliasControls,aliasSave);aliasCell.appendChild(aliasEditor);const fourth=document.createElement("td");fourth.appendChild(entryCellActions(entry));if(!entry.enabled)tr.classList.add("disabled");if(entryConflict(entry))tr.classList.add("conflict");tr.append(first,second,third,aliasCell,fourth);return tr}
+    function renderEntries(payload){const body=$("entries");body.replaceChildren();const rows=[];for(const instance of payload.instances||[]){for(const host of instance.hosts||[])rows.push({...host,instance:instance.instance,label:instance.label});if(instance.error)rows.push({instance:instance.instance,label:instance.label,error:instance.error})}if(!rows.length){const tr=document.createElement("tr");tr.innerHTML='<td colspan="5" class="empty">No proxy hosts on the saved instances.</td>';body.appendChild(tr);return}let currentInstance=null;for(const row of rows){if(row.instance!==currentInstance){currentInstance=row.instance;body.appendChild(instanceHeadRow(row,rows))}if(row.error){const tr=document.createElement("tr");const first=document.createElement("td");const tag=document.createElement("span");tag.className="tag ERROR";tag.textContent="ERROR";first.appendChild(tag);const second=document.createElement("td");second.textContent=row.label;const third=document.createElement("td");third.colSpan=3;third.textContent=row.error;tr.append(first,second,third);body.appendChild(tr);continue}body.appendChild(entryRow(row))}}
+    function renderPlan(status){const body=$("plan-entries");body.replaceChildren();if(!status.last_check){const tr=document.createElement("tr");tr.innerHTML='<td colspan="3" class="empty">Run Preview now to see PSL records and skip reasons.</td>';body.appendChild(tr);return}const rows=[...(status.planned||[]).map(item=>({status:item.status,name:item.domain||item.name||"",instance:item.instance||"",details:item.details||""})),...(status.skipped||[]).map(item=>({status:item.status||plannerSkipStatus(item.reason),name:item.name||"",instance:item.instance||"",details:item.reason||item.details||""}))];if(!rows.length){const tr=document.createElement("tr");tr.innerHTML='<td colspan="3" class="empty">The latest run returned no route or skip records.</td>';body.appendChild(tr);return}for(const item of rows){const tr=document.createElement("tr");const result=document.createElement("td");const tag=document.createElement("span");tag.className=`tag ${item.status}`;tag.textContent=item.status;result.appendChild(tag);const guest=document.createElement("td");guest.textContent=item.name;const detail=document.createElement("td");detail.textContent=[item.instance,item.details].filter(Boolean).join(" · ");tr.append(result,guest,detail);body.appendChild(tr)}}
+    async function loadEntries(){if(entriesBusy){entriesPending=true;return}entriesBusy=true;const button=$("refresh-entries");button.disabled=true;setEntriesBusy(true);try{renderEntries(await api("/api/entries"))}catch(error){toast(error.message,"error")}finally{button.disabled=false;setEntriesBusy(false);entriesBusy=false;if(entriesPending){entriesPending=false;loadEntries()}}}
+    function renderGenerated(config){const host=$("generated");host.replaceChildren();const domain=(config.public_domain||"").trim();const instances=config.instances||{};const mapped={};for(const [tag,mapping]of Object.entries(config.vlan_map||{})){if(!mapping||!mapping.instance)continue;(mapped[mapping.instance]=mapped[mapping.instance]||[]).push({tag,zone:mapping.zone})}const names=Object.keys(instances);if(!names.length){host.innerHTML='<p class="status-meta">Add an NPMPlus instance to see the generated routes.</p>';return}for(const name of names){const rows=mapped[name]||[];const note=document.createElement("p");note.className="note generated-note";const title=document.createElement("b");title.textContent=rows.length?`${instanceDisplay(name)} · VLAN ${rows.map(row=>row.tag).join(", ")}`:`${instanceDisplay(name)} · no VLAN mapped`;const detail=rows.length?(domain?rows.map(row=>`app.${domain} → app.${row.zone}:port`).join("\n"):"Set the public hostname domain to preview generated names."):"Map a VLAN tag to this instance in its VLAN routing card.";note.append(title,document.createElement("br"),document.createTextNode(detail));host.appendChild(note)}}
+    function applyConfig(config){for(const [key,id] of Object.entries(fields))$(id).value=config[key]??"";secretField($("pve-pass"),config.pve_local_password_env||"",Boolean(config.pve_local_password_configured));$("watch-enabled").checked=Boolean(config.watch_enabled);$("auto-apply").checked=Boolean(config.auto_apply);$("delete-removed").checked=Boolean(config.delete_removed_hosts);$("pve-insecure").checked=config.pve_local_verify_tls===false;$("instance-rows").replaceChildren();for(const [name,entry]of Object.entries(config.instances||{}))instanceRow(name,entry.label||"",entry.url||"",entry.identity||"",Boolean(entry.secret_configured),entry.secret_env||"",entry.verify_tls!==false);if(!Object.keys(config.instances||{}).length)instanceRow();$("vlan-groups").replaceChildren();for(const name of Object.keys(config.instances||{}))vlanGroup(name);for(const [tag,mapping]of Object.entries(config.vlan_map||{})){const instance=mapping&&mapping.instance?mapping.instance:"(unassigned)";vlanRow(vlanGroup(instance),tag,mapping&&mapping.zone?mapping.zone:"")}refreshVlanGroups();const domain=(config.public_domain||"").trim();$("system-badge").textContent=domain?`${domain} · split DNS`:"VLAN-aware split DNS";renderGenerated(config);takeSnapshot()}
+    async function loadConfig(){applyConfig(await api("/api/config"))}
+    function configPayload(){const config={};for(const [key,id]of Object.entries(fields))config[key]=$(id).value;config.poll_interval_seconds=config.poll_interval_seconds===""?null:Number(config.poll_interval_seconds);config.max_deletes_per_run=config.max_deletes_per_run===""?null:Number(config.max_deletes_per_run);config.instances=getInstances();config.vlan_map=getVlanMap();config.watch_enabled=$("watch-enabled").checked;config.auto_apply=$("auto-apply").checked;config.delete_removed_hosts=$("delete-removed").checked;config.pve_local_verify_tls=!$("pve-insecure").checked;config.pve_local_password=$("pve-pass").value;return config}
+    async function saveConfig(){const saved=await api("/api/config",configPayload());applyConfig(saved.config);toast("Configuration saved on this machine.");await refreshStatus()}
+    async function refreshStatus(){renderStatus(await api("/api/status"))}
+    async function run(path){const button=path==="/api/apply"?$("apply-now"):$("preview-now");const verb=path==="/api/apply"?"Apply":"Preview";const original=button.textContent;button.disabled=true;button.textContent="Refreshing PSL records…";try{await saveConfig();toast(`${verb} started; refreshing PSL records and detecting current endpoints.`);const status=await api(path,{});renderStatus(status);if(status.state==="busy")toast(status.message,"error");else if(status.state==="error")toast(`${verb} failed: ${status.message||"see the status line above"}`,"error");else toast(`${verb} completed.`)}catch(error){toast(error.message,"error")}finally{button.disabled=false;button.textContent=original}}
+    $("add-instance").onclick=()=>{instanceRow();refreshVlanGroups()};$("save-config").onclick=()=>saveConfig().catch(error=>toast(error.message,"error"));$("save-instances").onclick=()=>saveConfig().catch(error=>toast(error.message,"error"));$("save-vlans").onclick=()=>saveConfig().catch(error=>toast(error.message,"error"));$("refresh-entries").onclick=()=>loadEntries();$("preview-now").onclick=()=>run("/api/preview");$("apply-now").onclick=()=>{if(confirm("Apply the current route plan to NPMPlus? Hosts neither created nor adopted by this app are never changed or deleted; the ones it created may be updated or deleted, and the ones you adopted are updated but never deleted."))run("/api/apply")};$("delete-removed").onchange=()=>saveConfig().catch(error=>toast(error.message,"error"));
+    document.querySelectorAll("[data-test]").forEach(button=>button.onclick=async()=>{button.disabled=true;try{await saveConfig();const result=await api("/api/test",{target:button.dataset.test});toast(result.message)}catch(error){toast(error.message,"error")}finally{button.disabled=false}});
+    $("watch-enabled").onchange=()=>saveConfig().catch(error=>toast(error.message,"error"));$("auto-apply").onchange=()=>saveConfig().catch(error=>toast(error.message,"error"));$("pve-insecure").onchange=()=>saveConfig().catch(error=>toast(error.message,"error"));
+    function takeSnapshot(){try{formSnapshot=JSON.stringify(configPayload());panelSnapshots=snapshotPanels()}catch(error){formSnapshot=null;panelSnapshots=null}paintDirty()}
+    function formState(){try{return {dirty:JSON.stringify(configPayload())!==formSnapshot,error:""}}catch(error){return {dirty:true,error:error.message}}}
+    function paintDirty(){const state=formState();const chip=$("unsaved");if(!chip)return;chip.hidden=!state.dirty;chip.title=state.error||"Settings in this page are not saved on this machine yet";paintTabs(state.dirty)}
+    // Settings are grouped on their own tabs, so an unsaved edit has to say which tab holds
+    // it: a hidden panel would otherwise hide the change. Every tab compares its own
+    // fields against the values the saved settings were loaded with, so a row added or
+    // removed counts as a change as well as a typed one.
+    function tabButtons(){return [...document.querySelectorAll(".tab")]}
+    function fieldValue(node){return node.type==="checkbox"?String(node.checked):node.value}
+    function panelSignature(panel){return [...panel.querySelectorAll("input,textarea,select")].map(fieldValue).join("\u0001")}
+    function snapshotPanels(){const snapshots={};for(const panel of document.querySelectorAll("[role=tabpanel]"))snapshots[panel.id]=panelSignature(panel);return snapshots}
+    function paintTabs(dirty){for(const tab of tabButtons()){const panel=$(tab.getAttribute("aria-controls"));tab.classList.toggle("dirty",Boolean(dirty&&panel&&panelSnapshots&&panelSnapshots[panel.id]!==panelSignature(panel)))}}
+    function showTab(name,focus){for(const tab of tabButtons()){const selected=tab.dataset.tab===name;tab.setAttribute("aria-selected",selected?"true":"false");tab.tabIndex=selected?0:-1;$(tab.getAttribute("aria-controls")).hidden=!selected;if(selected&&focus)tab.focus()}}
+    tabButtons().forEach(tab=>{tab.onclick=()=>showTab(tab.dataset.tab);tab.onkeydown=event=>{const tabs=tabButtons();const step=event.key==="ArrowRight"?1:event.key==="ArrowLeft"?-1:0;const target=step?tabs[(tabs.indexOf(tab)+step+tabs.length)%tabs.length]:event.key==="Home"?tabs[0]:event.key==="End"?tabs[tabs.length-1]:null;if(!target)return;event.preventDefault();showTab(target.dataset.tab,true)}});
+    function plannerSkipStatus(reason){return /^duplicate hostname|already served by guest|already used by guest|already claimed/i.test(reason||"")?"CONFLICT":"SKIP"}
+    function summarizeEntries(hosts){const counts={managed:0,adopted:0,unmanaged:0};let total=0;for(const host of hosts){total+=1;if(counts[host.ownership]!==undefined)counts[host.ownership]+=1}const parts=[`${total} ${total===1?"entry":"entries"}`];for(const state of ["managed","adopted","unmanaged"]){if(counts[state])parts.push(`${counts[state]} ${state}`)}return parts.join(" \u00b7 ")}
+    function instanceHeadRow(row,rows){const tr=document.createElement("tr");tr.className="instance-head-row";const cell=document.createElement("td");cell.colSpan=5;const strong=document.createElement("strong");strong.textContent=row.label||row.instance;const meta=document.createElement("span");meta.className="entry-meta";const hosts=rows.filter(item=>item.instance===row.instance&&!item.error);meta.textContent=`${row.instance} \u00b7 ${summarizeEntries(hosts)}`;cell.append(strong,document.createTextNode(" "),meta);tr.appendChild(cell);return tr}
+    function paintEntryNames(node,entry){const list=(entry.domain_names||[]).filter(Boolean);if(!list.length){node.textContent=`host ${entry.id}`;return}const primary=document.createElement("span");primary.textContent=list[0];node.appendChild(primary);for(const name of list.slice(1)){const chip=document.createElement("span");chip.className="alias-chip";chip.textContent=name;node.appendChild(chip)}}
+    // The last run's verdict for an entry, matched on its first name. A skipped item
+    // may carry neither a status nor an instance, so it is normalised here exactly the
+    // way the reconciliation table does it, and a planned row wins over a skipped copy.
+    function entryStatusFor(entry){if(!latestStatus)return null;const domain=(entry.domain_names||[])[0];if(!domain)return null;const named=item=>(item.domain||item.name)===domain&&(!item.instance||item.instance===entry.instance);const matches=(latestStatus.planned||[]).filter(named);if(!matches.length)matches.push(...(latestStatus.skipped||[]).filter(named));if(!matches.length)return null;const item=matches[matches.length-1];return {status:item.status||plannerSkipStatus(item.reason),details:item.details||item.reason||""}}
+    function entryConflict(entry){const item=entryStatusFor(entry);return Boolean(item&&["CONFLICT","SKIP","ERROR"].includes(item.status))}
+    function entryStatusBadge(entry){const item=entryStatusFor(entry);if(!item||!item.status)return null;const badge=document.createElement("span");badge.className=`tag ${item.status} entry-badge`;badge.textContent=item.status;badge.title=item.details||item.reason||item.status;return badge}
+    function setEntriesBusy(busy){const body=$("entries");body.classList.toggle("busy",busy);body.querySelectorAll("button").forEach(button=>{button.disabled=busy})}
+    document.addEventListener("input",paintDirty);document.addEventListener("change",paintDirty);window.addEventListener("beforeunload",event=>{if(!formState().dirty)return;event.preventDefault();event.returnValue=""});
+    async function initialize(){await loadConfig();const status=await api("/api/status");lastCheckKey=status.last_check||null;renderStatus(status);await loadEntries()}
+    async function pollStatus(){try{await refreshStatus()}catch(error){console.warn("Status refresh failed:",error.message)}setTimeout(pollStatus,5000)}
+    initialize().catch(error=>toast(error.message,"error"));setTimeout(pollStatus,5000);
+  </script>
+</body>
+</html>
