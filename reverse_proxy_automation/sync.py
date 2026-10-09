@@ -244,8 +244,8 @@ def reconcile(
                     "CONFLICT",
                     instance,
                     domain_name,
-                    f"existing host {existing_id} is not recorded as automation-managed; adopt it in the "
-                    "adopt it in Host management to let this run update it",
+                    f"existing host {existing_id} is not recorded as automation-managed; adopt it in Host "
+                    "management to let this run update it",
                 ))
                 continue
 

@@ -161,6 +161,15 @@ class EndpointSwitchTests(unittest.TestCase):
         self.assertFalse(PveScriptsLocalClient("https://psl.internal.example.net", "u", "p", verify_tls=False).http.verify_tls)
         self.assertTrue(PveScriptsLocalClient("https://psl.internal.example.net").http.verify_tls)
 
+    def test_psl_requires_both_credentials_with_dashboard_field_names(self):
+        client = PveScriptsLocalClient("https://psl.internal.example.net", username="user")
+        with self.assertRaises(ApiError) as caught:
+            client.installed_scripts()
+        self.assertEqual(
+            str(caught.exception),
+            "Set both the PVE Scripts Local username and password, or leave both blank",
+        )
+
 
 class FakeResponse:
     """Stands in for the response so a reply body and its URL can be simulated."""

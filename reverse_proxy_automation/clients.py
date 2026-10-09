@@ -207,7 +207,9 @@ class PveScriptsLocalClient:
 
     def installed_scripts(self, refresh_lxc_config=False, progress_callback=None):
         if bool(self.username) != bool(self.password):
-            raise ApiError("Set both PVE_LOCAL_USERNAME and PVE_LOCAL_PASSWORD, or leave both blank")
+            raise ApiError(
+                "Set both the PVE Scripts Local username and password, or leave both blank"
+            )
         if self.username:
             self.http.request(
                 "/api/auth/login",
