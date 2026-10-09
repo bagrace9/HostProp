@@ -94,7 +94,7 @@ class MultiInstanceRunTests(unittest.TestCase):
                 "pve_local_url": "https://psl.example.net",
                 "public_domain": "example.net",
                 "instances": {"lab": {"url": "https://lab.example.net:81"}},
-                "vlan_map": {"20": {"instance": "lab", "zone": "lab.lan"}},
+                "vlan_map": {"20": {"instance": "lab", "zone": "internal.example.net"}},
                 "watch_enabled": True,
                 "auto_apply": True,
                 "poll_interval_seconds": 300,
@@ -120,7 +120,7 @@ class MultiInstanceRunTests(unittest.TestCase):
             service, store = service_for(
                 directory,
                 {"lab": {"url": "https://lab.example.net:81"}},
-                {"20": {"instance": "lab", "zone": "lab.lan"}},
+                {"20": {"instance": "lab", "zone": "internal.example.net"}},
             )
             called = threading.Event()
             arguments = []
@@ -144,7 +144,7 @@ class MultiInstanceRunTests(unittest.TestCase):
                 service.stop()
 
     def test_refresh_failure_is_a_plan_skip_and_does_not_fail_the_run(self):
-        script = guest("photos", "20", 2283)
+        script = guest("photos", "20", 8081)
         script["_refresh_error"] = "Could not refresh LXC config for container 101: SSH connection failed"
         PSL_SCRIPTS[:] = [script]
 
@@ -153,7 +153,7 @@ class MultiInstanceRunTests(unittest.TestCase):
             service, _ = service_for(
                 directory,
                 {"lab": {"url": "https://lab.example.net:81"}},
-                {"20": {"instance": "lab", "zone": "lab.lan"}},
+                {"20": {"instance": "lab", "zone": "internal.example.net"}},
             )
             try:
                 status = service.run_once(refresh_lxc_config=True)
@@ -172,8 +172,8 @@ class MultiInstanceRunTests(unittest.TestCase):
         def factory(name, url, identity="", secret="", verify_tls=True):
             return registry.setdefault(name, FakeNpmPlus(name, url))
 
-        script = guest("photos", "20", 2283)
-        script["web_ui_ip"] = "10.20.20.8"
+        script = guest("photos", "20", 8081)
+        script["web_ui_ip"] = "192.0.2.8"
         script["_refresh_error"] = "Could not refresh Web UI IP: SSH connection failed"
         PSL_SCRIPTS[:] = [script]
 
@@ -183,7 +183,7 @@ class MultiInstanceRunTests(unittest.TestCase):
             service, _ = service_for(
                 directory,
                 {"lab": {"url": "https://lab.example.net:81"}},
-                {"20": {"instance": "lab", "zone": "lab.lan"}},
+                {"20": {"instance": "lab", "zone": "internal.example.net"}},
             )
             try:
                 status = service.run_once(refresh_lxc_config=True)
@@ -201,7 +201,7 @@ class MultiInstanceRunTests(unittest.TestCase):
             service, _ = service_for(
                 directory,
                 {"lab": {"url": "https://lab.example.net:81"}},
-                {"20": {"instance": "lab", "zone": "lab.lan"}},
+                {"20": {"instance": "lab", "zone": "internal.example.net"}},
             )
             entered = threading.Event()
             result = []
@@ -237,7 +237,7 @@ class MultiInstanceRunTests(unittest.TestCase):
             service, _ = service_for(
                 directory,
                 {"lab": {"url": "https://lab.example.net:81"}},
-                {"20": {"instance": "lab", "zone": "lab.lan"}},
+                {"20": {"instance": "lab", "zone": "internal.example.net"}},
             )
             service.status.update({
                 "planned": [{"domain": "old.example.net"}],
@@ -256,7 +256,7 @@ class MultiInstanceRunTests(unittest.TestCase):
 
     def test_cleared_exclusion_setting_allows_guest_without_a_configured_exclusion(self):
         registry = {}
-        PSL_SCRIPTS[:] = [guest("npmplus-lab", "20", 81)]
+        PSL_SCRIPTS[:] = [guest("npmplus-one", "20", 81)]
 
         def factory(name, url, identity, secret, verify_tls=True):
             return registry.setdefault(name, FakeNpmPlus(name, url))
@@ -267,7 +267,7 @@ class MultiInstanceRunTests(unittest.TestCase):
             service, store = service_for(
                 directory,
                 {"lab": {"url": "https://lab.example.net:81"}},
-                {"20": {"instance": "lab", "zone": "lab.lan"}},
+                {"20": {"instance": "lab", "zone": "internal.example.net"}},
             )
             store.save({"excluded_guest_hostnames": ""})
             PSL_REFRESH_REQUESTS.clear()
@@ -279,7 +279,7 @@ class MultiInstanceRunTests(unittest.TestCase):
         self.assertEqual(status["state"], "ok", status["message"])
         self.assertEqual(PSL_REFRESH_REQUESTS, [True])
         self.assertEqual(status["planned"][0]["status"], "DRY-CREATE")
-        self.assertEqual(status["planned"][0]["domain"], "npmplus-lab.example.net")
+        self.assertEqual(status["planned"][0]["domain"], "npmplus-one.example.net")
         self.assertEqual(status["skipped"], [])
 
     def test_every_vlan_is_reconciled_on_the_instance_it_maps_to(self):
@@ -288,14 +288,14 @@ class MultiInstanceRunTests(unittest.TestCase):
         def factory(name, url, identity, secret, verify_tls=True):
             return registry.setdefault(name, FakeNpmPlus(name, url))
 
-        PSL_SCRIPTS[:] = [guest("photos", "20", 2283, 1), guest("wiki", "30", 8080, 2, "102")]
+        PSL_SCRIPTS[:] = [guest("photos", "20", 8081, 1), guest("wiki", "30", 8080, 2, "102")]
         instances = {
             "lab": {"url": "https://lab.example.net:81"},
             "dmz": {"url": "https://dmz.example.net:81"},
         }
         vlan_map = {
-            "20": {"instance": "lab", "zone": "lab.lan"},
-            "30": {"instance": "dmz", "zone": "dmz.lan"},
+            "20": {"instance": "lab", "zone": "internal.example.net"},
+            "30": {"instance": "dmz", "zone": "dmz.example.net"},
         }
         with tempfile.TemporaryDirectory() as directory, \
                 mock.patch("reverse_proxy_automation.service.PveScriptsLocalClient", FakePsl), \
@@ -311,9 +311,9 @@ class MultiInstanceRunTests(unittest.TestCase):
                 self.assertGreaterEqual(status["timings"]["planning_seconds"], 0)
                 self.assertGreaterEqual(status["timings"]["npmplus_seconds"], 0)
                 self.assertEqual(sorted(registry), ["dmz NPMPlus", "lab NPMPlus"])
-                self.assertEqual(registry["lab NPMPlus"].hosts["1"]["forward_host"], "photos.lab.lan")
-                self.assertEqual(registry["lab NPMPlus"].hosts["1"]["forward_port"], 2283)
-                self.assertEqual(registry["dmz NPMPlus"].hosts["1"]["forward_host"], "wiki.dmz.lan")
+                self.assertEqual(registry["lab NPMPlus"].hosts["1"]["forward_host"], "photos.internal.example.net")
+                self.assertEqual(registry["lab NPMPlus"].hosts["1"]["forward_port"], 8081)
+                self.assertEqual(registry["dmz NPMPlus"].hosts["1"]["forward_host"], "wiki.dmz.example.net")
                 self.assertEqual(
                     load_state(state_path)["managed"],
                     {"lab:photos.example.net": "1", "dmz:wiki.example.net": "1"},
@@ -337,7 +337,7 @@ class MultiInstanceRunTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, \
                 mock.patch("reverse_proxy_automation.service.PveScriptsLocalClient", FakePsl), \
                 mock.patch("reverse_proxy_automation.service.NpmPlusClient", factory):
-            service, _ = service_for(directory, {"dmz": {"url": ""}}, {"30": {"instance": "dmz", "zone": "dmz.lan"}})
+            service, _ = service_for(directory, {"dmz": {"url": ""}}, {"30": {"instance": "dmz", "zone": "dmz.example.net"}})
             try:
                 status = service.run_once(apply_changes=False)
             finally:
@@ -354,12 +354,12 @@ class DuplicateContainerRecordTests(unittest.TestCase):
             return registry.setdefault(name, FakeNpmPlus(name, url))
 
         # One container, two records: the failed first attempt and the retry.
-        stale = guest("seerr.sh", "20", 5000, 158, "115")
+        stale = guest("previous-app.sh", "20", 5000, 1, "100")
         stale["status"] = "failed"
-        fresh = guest("sonobarr.sh", "20", 5000, 159, "115")
+        fresh = guest("current-app.sh", "20", 5000, 2, "100")
         PSL_SCRIPTS[:] = [stale, fresh]
         instances = {"lab": {"url": "https://lab.example.net:81"}}
-        vlan_map = {"20": {"instance": "lab", "zone": "lab.lan"}}
+        vlan_map = {"20": {"instance": "lab", "zone": "internal.example.net"}}
         with tempfile.TemporaryDirectory() as directory, \
                 mock.patch("reverse_proxy_automation.service.PveScriptsLocalClient", FakePsl), \
                 mock.patch("reverse_proxy_automation.service.NpmPlusClient", factory):
@@ -370,7 +370,7 @@ class DuplicateContainerRecordTests(unittest.TestCase):
                 service.stop()
         self.assertEqual(status["state"], "ok", status["message"])
         self.assertEqual(list(registry["lab NPMPlus"].hosts), ["1"])
-        self.assertEqual(registry["lab NPMPlus"].hosts["1"]["domain_names"], ["sonobarr.example.net"])
+        self.assertEqual(registry["lab NPMPlus"].hosts["1"]["domain_names"], ["current-app.example.net"])
         # One container is one guest; historical PSL attempts are not surfaced as
         # skipped hosts.
         self.assertEqual(status["guest_count"], 1)
@@ -393,7 +393,7 @@ class SecretReferenceRunTests(unittest.TestCase):
             service, _ = service_for(
                 directory,
                 {"dmz": {"url": "https://dmz.example.net:81", "secret": "env:NPM_DMZ_SECRET"}},
-                {"30": {"instance": "dmz", "zone": "dmz.lan"}},
+                {"30": {"instance": "dmz", "zone": "dmz.example.net"}},
             )
             try:
                 status = service.run_once(apply_changes=True)
@@ -413,7 +413,7 @@ class SecretReferenceRunTests(unittest.TestCase):
             service, _ = service_for(
                 directory,
                 {"dmz": {"url": "https://dmz.example.net:81", "secret": "env:NPM_TEST_VARIABLE_NOT_SET"}},
-                {"30": {"instance": "dmz", "zone": "dmz.lan"}},
+                {"30": {"instance": "dmz", "zone": "dmz.example.net"}},
             )
             try:
                 status = service.run_once(apply_changes=True)
@@ -499,7 +499,7 @@ class SelfSignedRunTests(unittest.TestCase):
             seen[name] = verify_tls
             return FakeNpmPlus(name, url)
 
-        PSL_SCRIPTS[:] = [guest("photos", "20", 2283, 1), guest("wiki", "30", 8080, 2, "102")]
+        PSL_SCRIPTS[:] = [guest("photos", "20", 8081, 1), guest("wiki", "30", 8080, 2, "102")]
         with tempfile.TemporaryDirectory() as directory, \
                 mock.patch("reverse_proxy_automation.service.PveScriptsLocalClient", psl_factory), \
                 mock.patch("reverse_proxy_automation.service.NpmPlusClient", factory):
@@ -513,8 +513,8 @@ class SelfSignedRunTests(unittest.TestCase):
                     "dmz": {"url": "https://dmz.example.net:81"},
                 },
                 "vlan_map": {
-                    "20": {"instance": "lab", "zone": "lab.lan"},
-                    "30": {"instance": "dmz", "zone": "dmz.lan"},
+                    "20": {"instance": "lab", "zone": "internal.example.net"},
+                    "30": {"instance": "dmz", "zone": "dmz.example.net"},
                 },
             })
             service = SyncService(store, Path(directory) / "sync-state.json")
@@ -579,27 +579,27 @@ class EntryManagementTests(unittest.TestCase):
         registry = {"lab NPMPlus": FakeNpmPlus("lab NPMPlus", "https://lab.example.net:81")}
         client = registry["lab NPMPlus"]
         client.hosts["9"] = {
-            "domain_names": ["autobrr.example.net"], "forward_scheme": "http",
-            "forward_host": "autobrr.lab.lan", "forward_port": 7474,
+            "domain_names": ["feed-service.example.net"], "forward_scheme": "http",
+            "forward_host": "feed-service.internal.example.net", "forward_port": 8082,
         }
         client.hosts["21"] = {
-            "domain_names": ["immich.example.net", "photos.example.net"], "forward_scheme": "http",
-            "forward_host": "immich.public.lan", "forward_port": 2283,
+            "domain_names": ["media-service.example.net", "photos.example.net"], "forward_scheme": "http",
+            "forward_host": "media-service.public.example.net", "forward_port": 8081,
         }
         client.hosts["30"] = {
-            "domain_names": ["plex.example.net"], "forward_scheme": "http",
-            "forward_host": "plex.public.lan", "forward_port": 32400,
+            "domain_names": ["video-service.example.net"], "forward_scheme": "http",
+            "forward_host": "video-service.public.example.net", "forward_port": 8090,
         }
         with tempfile.TemporaryDirectory() as directory, \
                 mock.patch("reverse_proxy_automation.service.NpmPlusClient", self.registry_factory(registry)):
             service, store = self.build(
                 directory,
                 {"lab": {"url": "https://lab.example.net:81"}},
-                managed={"lab:autobrr.example.net": "9"},
+                managed={"lab:feed-service.example.net": "9"},
                 adopted={"lab:21": True},
             )
             try:
-                service.config_store.save({"aliases": "immich = gallery"})
+                service.config_store.save({"aliases": "media-service = gallery"})
                 listing = service.list_entries()
             finally:
                 service.stop()
@@ -610,10 +610,10 @@ class EntryManagementTests(unittest.TestCase):
         self.assertEqual(
             [host["ownership"] for host in lab["hosts"]], ["managed", "adopted", "unmanaged"]
         )
-        self.assertEqual(lab["hosts"][1]["domain_names"], ["immich.example.net", "photos.example.net"])
+        self.assertEqual(lab["hosts"][1]["domain_names"], ["media-service.example.net", "photos.example.net"])
         self.assertEqual(lab["hosts"][1]["aliases"], ["gallery.example.net"])
-        self.assertEqual(lab["hosts"][0]["forward_host"], "autobrr.lab.lan")
-        self.assertEqual(lab["hosts"][0]["forward_port"], 7474)
+        self.assertEqual(lab["hosts"][0]["forward_host"], "feed-service.internal.example.net")
+        self.assertEqual(lab["hosts"][0]["forward_port"], 8082)
         self.assertIsNone(lab["hosts"][0]["port_override"])
 
     def test_multiple_instances_are_loaded_concurrently(self):
@@ -661,8 +661,8 @@ class EntryManagementTests(unittest.TestCase):
     def test_adopting_and_releasing_an_entry_writes_and_clears_its_record(self):
         registry = {"lab NPMPlus": FakeNpmPlus("lab NPMPlus", "https://lab.example.net:81")}
         registry["lab NPMPlus"].hosts["21"] = {
-            "domain_names": ["immich.example.net", "photos.example.net"], "forward_scheme": "http",
-            "forward_host": "immich.public.lan", "forward_port": 2283,
+            "domain_names": ["media-service.example.net", "photos.example.net"], "forward_scheme": "http",
+            "forward_host": "media-service.public.example.net", "forward_port": 8081,
         }
         with tempfile.TemporaryDirectory() as directory, \
                 mock.patch("reverse_proxy_automation.service.NpmPlusClient", self.registry_factory(registry)):
@@ -682,8 +682,8 @@ class EntryManagementTests(unittest.TestCase):
     def test_aliases_are_saved_for_the_selected_guest_route(self):
         registry = {"lab NPMPlus": FakeNpmPlus("lab NPMPlus", "https://lab.example.net:81")}
         registry["lab NPMPlus"].hosts["21"] = {
-            "domain_names": ["immich.example.net"], "forward_scheme": "http",
-            "forward_host": "immich.public.lan", "forward_port": 2283,
+            "domain_names": ["media-service.example.net"], "forward_scheme": "http",
+            "forward_host": "media-service.public.example.net", "forward_port": 8081,
         }
         with tempfile.TemporaryDirectory() as directory, \
                 mock.patch("reverse_proxy_automation.service.NpmPlusClient", self.registry_factory(registry)):
@@ -692,19 +692,19 @@ class EntryManagementTests(unittest.TestCase):
                 result = service.set_entry_aliases(
                     "lab", "21", ["pictures", "gallery.example.org"]
                 )
-                self.assertEqual(result["guest_hostname"], "immich")
+                self.assertEqual(result["guest_hostname"], "media-service")
                 self.assertEqual(
                     result["aliases"],
                     ["pictures.example.net", "gallery.example.org"],
                 )
                 self.assertEqual(
                     service.config_store.load()["entry_aliases"],
-                    {"lab:immich": ["pictures.example.net", "gallery.example.org"]},
+                    {"lab:media-service": ["pictures.example.net", "gallery.example.org"]},
                 )
                 listing = service.list_entries()
                 self.assertEqual(listing["instances"][0]["hosts"][0]["aliases"], result["aliases"])
                 with self.assertRaises(ValueError):
-                    service.set_entry_aliases("lab", "21", ["immich"])
+                    service.set_entry_aliases("lab", "21", ["media-service"])
             finally:
                 service.stop()
 
@@ -712,8 +712,8 @@ class EntryManagementTests(unittest.TestCase):
         registry = {"lab NPMPlus": FakeNpmPlus("lab NPMPlus", "https://lab.example.net:81")}
         client_builds = []
         registry["lab NPMPlus"].hosts["21"] = {
-            "domain_names": ["immich.example.net", "photos.example.net"], "forward_scheme": "http",
-            "forward_host": "immich.public.lan", "forward_port": 2283,
+            "domain_names": ["media-service.example.net", "photos.example.net"], "forward_scheme": "http",
+            "forward_host": "media-service.public.example.net", "forward_port": 8081,
         }
 
         def factory(name, url, identity="", secret="", verify_tls=True):
@@ -725,7 +725,7 @@ class EntryManagementTests(unittest.TestCase):
             service, state_path = self.build(
                 directory,
                 {"lab": {"url": "https://lab.example.net:81"}},
-                managed={"lab:immich.example.net": "21"},
+                managed={"lab:media-service.example.net": "21"},
             )
             try:
                 result = service.delete_entry("lab", "21")
@@ -733,7 +733,7 @@ class EntryManagementTests(unittest.TestCase):
                 service.stop()
         self.assertEqual(registry["lab NPMPlus"].deleted, ["21"])
         self.assertEqual(client_builds, ["lab NPMPlus"])
-        self.assertIn("immich.example.net, photos.example.net", result["message"])
+        self.assertIn("media-service.example.net, photos.example.net", result["message"])
         self.assertTrue(result["message"].startswith("Deleted"), result["message"])
         self.assertEqual(load_state(state_path)["managed"], {})
 
@@ -758,16 +758,16 @@ class EntryManagementTests(unittest.TestCase):
 
     def test_aliases_from_the_settings_reach_the_created_host(self):
         registry = {}
-        PSL_SCRIPTS[:] = [guest("immich", "20", 2283, 1)]
+        PSL_SCRIPTS[:] = [guest("media-service", "20", 8081, 1)]
         with tempfile.TemporaryDirectory() as directory, \
                 mock.patch("reverse_proxy_automation.service.PveScriptsLocalClient", FakePsl), \
                 mock.patch("reverse_proxy_automation.service.NpmPlusClient", self.registry_factory(registry)):
             service, _ = service_for(
                 directory,
                 {"public": {"url": "https://public.example.net:81"}},
-                {"20": {"instance": "public", "zone": "public.lan"}},
+                {"20": {"instance": "public", "zone": "public.example.net"}},
             )
-            service.config_store.save({"aliases": "immich = photos"})
+            service.config_store.save({"aliases": "media-service = photos"})
             try:
                 status = service.run_once(apply_changes=True)
             finally:
@@ -775,23 +775,23 @@ class EntryManagementTests(unittest.TestCase):
         self.assertEqual(status["state"], "ok", status["message"])
         self.assertEqual(
             registry["public NPMPlus"].hosts["1"]["domain_names"],
-            ["immich.example.net", "photos.example.net"],
+            ["media-service.example.net", "photos.example.net"],
         )
 
     def test_instance_guest_aliases_are_applied_to_their_route(self):
         registry = {}
-        PSL_SCRIPTS[:] = [guest("immich", "10", 2283)]
+        PSL_SCRIPTS[:] = [guest("media-service", "10", 8081)]
         with tempfile.TemporaryDirectory() as directory, \
                 mock.patch("reverse_proxy_automation.service.PveScriptsLocalClient", FakePsl), \
                 mock.patch("reverse_proxy_automation.service.NpmPlusClient", self.registry_factory(registry)):
             service, _ = service_for(
                 directory,
                 {"lab": {"url": "https://lab.example.net:81"}},
-                {"10": {"instance": "lab", "zone": "lab.lan"}},
+                {"10": {"instance": "lab", "zone": "internal.example.net"}},
             )
             service.config_store.save({
                 "entry_aliases": {
-                    "lab:immich": ["photos.example.net", "pictures.example.net"]
+                    "lab:media-service": ["photos.example.net", "pictures.example.net"]
                 }
             })
             try:
@@ -801,60 +801,60 @@ class EntryManagementTests(unittest.TestCase):
         self.assertEqual(status["state"], "ok", status["message"])
         self.assertEqual(
             registry["lab NPMPlus"].hosts["1"]["domain_names"],
-            ["immich.example.net", "photos.example.net", "pictures.example.net"],
+            ["media-service.example.net", "photos.example.net", "pictures.example.net"],
         )
 
     def test_host_management_port_override_is_persisted_and_applied_to_the_route(self):
         registry = {"lab NPMPlus": FakeNpmPlus("lab NPMPlus", "https://lab.example.net:81")}
         registry["lab NPMPlus"].hosts["21"] = {
-            "domain_names": ["immich.example.net"], "forward_scheme": "http",
-            "forward_host": "immich.lab.lan", "forward_port": 2283,
+            "domain_names": ["media-service.example.net"], "forward_scheme": "http",
+            "forward_host": "media-service.internal.example.net", "forward_port": 8081,
         }
-        PSL_SCRIPTS[:] = [guest("immich", "10", 80)]
+        PSL_SCRIPTS[:] = [guest("media-service", "10", 80)]
         with tempfile.TemporaryDirectory() as directory, \
                 mock.patch("reverse_proxy_automation.service.PveScriptsLocalClient", FakePsl), \
                 mock.patch("reverse_proxy_automation.service.NpmPlusClient", self.registry_factory(registry)):
             service, store = service_for(
                 directory,
                 {"lab": {"url": "https://lab.example.net:81"}},
-                {"10": {"instance": "lab", "zone": "lab.lan"}},
+                {"10": {"instance": "lab", "zone": "internal.example.net"}},
             )
             try:
                 service.set_ownership("lab", "21", "adopt")
-                result = service.set_entry_port("lab", "21", 32400)
-                self.assertEqual(result["port_override"], 32400)
+                result = service.set_entry_port("lab", "21", 8090)
+                self.assertEqual(result["port_override"], 8090)
                 self.assertEqual(
                     store.load()["entry_port_overrides"],
-                    {"lab:immich": 32400},
+                    {"lab:media-service": 8090},
                 )
                 listing = service.list_entries()
-                self.assertEqual(listing["instances"][0]["hosts"][0]["port_override"], 32400)
+                self.assertEqual(listing["instances"][0]["hosts"][0]["port_override"], 8090)
                 preview = service.run_once(apply_changes=False)
                 self.assertEqual(preview["state"], "ok", preview["message"])
-                self.assertIn(":32400", preview["planned"][0]["details"])
+                self.assertIn(":8090", preview["planned"][0]["details"])
                 status = service.run_once(apply_changes=True)
             finally:
                 service.stop()
 
         self.assertEqual(status["state"], "ok", status["message"])
-        self.assertEqual(registry["lab NPMPlus"].hosts["21"]["forward_port"], 32400)
+        self.assertEqual(registry["lab NPMPlus"].hosts["21"]["forward_port"], 8090)
 
     def test_clearing_a_host_port_override_restores_detected_port_routing(self):
         registry = {"lab NPMPlus": FakeNpmPlus("lab NPMPlus", "https://lab.example.net:81")}
         registry["lab NPMPlus"].hosts["21"] = {
-            "domain_names": ["immich.example.net"], "forward_scheme": "http",
-            "forward_host": "immich.lab.lan", "forward_port": 32400,
+            "domain_names": ["media-service.example.net"], "forward_scheme": "http",
+            "forward_host": "media-service.internal.example.net", "forward_port": 8090,
         }
-        PSL_SCRIPTS[:] = [guest("immich", "10", 2283)]
+        PSL_SCRIPTS[:] = [guest("media-service", "10", 8081)]
         with tempfile.TemporaryDirectory() as directory, \
                 mock.patch("reverse_proxy_automation.service.PveScriptsLocalClient", FakePsl), \
                 mock.patch("reverse_proxy_automation.service.NpmPlusClient", self.registry_factory(registry)):
             service, store = service_for(
                 directory,
                 {"lab": {"url": "https://lab.example.net:81"}},
-                {"10": {"instance": "lab", "zone": "lab.lan"}},
+                {"10": {"instance": "lab", "zone": "internal.example.net"}},
             )
-            store.save({"entry_port_overrides": {"lab:immich": 32400}})
+            store.save({"entry_port_overrides": {"lab:media-service": 8090}})
             try:
                 service.set_ownership("lab", "21", "adopt")
                 result = service.set_entry_port("lab", "21", "")
@@ -865,13 +865,13 @@ class EntryManagementTests(unittest.TestCase):
                 service.stop()
 
         self.assertEqual(status["state"], "ok", status["message"])
-        self.assertEqual(registry["lab NPMPlus"].hosts["21"]["forward_port"], 2283)
+        self.assertEqual(registry["lab NPMPlus"].hosts["21"]["forward_port"], 8081)
 
     def test_host_port_override_rejects_out_of_range_and_fractional_values(self):
         registry = {"lab NPMPlus": FakeNpmPlus("lab NPMPlus", "https://lab.example.net:81")}
         registry["lab NPMPlus"].hosts["21"] = {
-            "domain_names": ["immich.example.net"], "forward_scheme": "http",
-            "forward_host": "immich.lab.lan", "forward_port": 2283,
+            "domain_names": ["media-service.example.net"], "forward_scheme": "http",
+            "forward_host": "media-service.internal.example.net", "forward_port": 8081,
         }
         with tempfile.TemporaryDirectory() as directory, \
                 mock.patch("reverse_proxy_automation.service.NpmPlusClient", self.registry_factory(registry)):
@@ -888,7 +888,7 @@ class EntryManagementTests(unittest.TestCase):
             store = ConfigStore(Path(directory) / "app-config.json")
             store.save({"pve_local_url": "https://psl.example.net", "public_domain": "example.net"})
             with self.assertRaises(ValueError) as caught:
-                store.save({"aliases": "immich photos"})
+                store.save({"aliases": "media-service photos"})
         self.assertIn("Alias line 1", str(caught.exception))
 
 

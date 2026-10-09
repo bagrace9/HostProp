@@ -345,7 +345,7 @@ def validate_config(config, allow_incomplete=False):
                 "add that instance or remove the VLAN row"
             )
         if not isinstance(mapping.get("zone"), str) or not mapping["zone"].strip():
-            raise ValueError(f"VLAN {vlan} needs an upstream DNS zone such as lab.lan")
+            raise ValueError(f"VLAN {vlan} needs an upstream DNS zone such as internal.example.net")
     raw_interval = config.get("poll_interval_seconds")
     if raw_interval in (None, ""):
         interval = None

@@ -8,9 +8,9 @@ Creates or updates NPMPlus proxy hosts from the installed-guest records in PVE S
 - VLAN routing has one card per NPMPlus instance: every Proxmox VLAN tag that instance serves is a row in its card, next to the DNS zone that instance can resolve for guests on that VLAN. One instance can have any number of rows.
 - A created proxy host sends `https://<guest-hostname>.<public domain>` to `http://<guest-hostname>.<zone>:<web_ui_port>` on the instance its VLAN row names.
 - Guest hostname and `web_ui_port` come from the PVE Scripts Local installed-script response.
-- The VLAN tag comes from the guest's cached LXC config in that response (`net_vlan`) whenever PSL sends one. A PSL deployment that sends no LXC config at all still reports each guest's web UI address, and a network that segments by VLAN repeats the tag in the second and third octet of it (`10.2.2.107` is VLAN 2, matching the `2` row), so there the address supplies the tag. An address that does not repeat the same number twice is not read as a tag: those guests fall back to the `untagged` tag, which is also what a guest whose cached config carries no tag always uses.
+- The VLAN tag comes from the guest's cached LXC config in that response (`net_vlan`) whenever PSL sends one. A PSL deployment that sends no LXC config at all still reports each guest's web UI address, and a network that segments by VLAN repeats the tag in the second and third octets (`<network>.<tag>.<tag>.<host>`), so there the address supplies the tag. An address that does not repeat the same number twice is not read as a tag: those guests fall back to the `untagged` tag, which is also what a guest whose cached config carries no tag always uses.
 - Manual `Preview now` and `Apply now` first check container status through PSL, skip containers Proxmox reports as stopped, then force-refresh LXC config and auto-detect the live Web UI IP/port for every remaining non-VM PSL record with a container ID, including historical install records. A valid port returned by auto-detection takes precedence over the saved port and is written back to PSL, so the preview reflects the detected endpoint; if detection does not return a valid port, a valid saved port is retained. The button and status message show that refresh is in progress, including the current record; a manual run waits for an active watcher run instead of returning its old plan. Refresh may take longer when many records need updating. If the selected current record cannot be refreshed but already has a stored IP and valid port, those values are used without adding a plan error; refresh failures on superseded install records are not reported. Without both stored values, the current record is skipped and its error appears in `Latest PSL plan`. A container-status lookup failure still stops the run because PSL has not identified which containers are stopped. PSL's auto-detect API requires SSH-mode records. When enabled, the background watcher also refreshes running containers' LXC config and Web UI endpoints through PSL before every scheduled plan.
-- A PSL name that ends in `.sh` keeps the word before the period as the guest hostname (`photoprism.sh` → `photoprism`); that name is used whether it comes from the guest's cached LXC hostname or from the script name. Any other name has to be a valid host label already, and one that is not is skipped.
+- A PSL name that ends in `.sh` keeps the word before the period as the guest hostname (`photo-service.sh` → `photo-service`); that name is used whether it comes from the guest's cached LXC hostname or from the script name. Any other name has to be a valid host label already, and one that is not is skipped.
 - PSL keeps one record per install attempt, so one container can be described by several records: an install that failed and was retried, or a reinstall under another script name, leaves the earlier record beside the later one. Records are matched by `container_id`, never by name, and one container yields at most one proxy host: the newest record is used regardless of PSL's install status, even if an older record has more complete or stale networking data. Historical records are not reported as skipped guests. A record that states no `container_id` is left as a guest of its own, because nothing ties it to another record.
 - The PSL tab's excluded-hostname list is empty initially and authoritative: only listed names are excluded. Excluding an NPMPlus admin guest is recommended to avoid proxy loops or accidental exposure of its admin UI.
 - A guest may be given extra names for its proxy host (aliases), so one entry serves `<guest>.<public domain>` plus, say, `photos.<public domain>`. See [Aliases](#aliases-one-host-several-names).
@@ -26,13 +26,13 @@ Use Python 3.11 or newer. The app uses only Python's standard library, so there 
 The dashboard groups setup and host operations on four tabs inside one card: `PSL` holds the PVE Scripts Local endpoint and the guests to leave alone, `NPMPlus` holds every instance this app may write to plus the public names it creates there, `VLAN routing` holds the VLAN tag cards that send a tag to an instance, and `Host management` lists and manages individual proxy entries. Connection details, public domain, exclusions, VLAN routes, check interval, and deletion limit start blank; fill in what you use. Watch PSL and automatic deletion are off until enabled, and TLS certificate verification remains on unless you explicitly turn it off. Each settings tab has its own save button, and any of them writes the whole settings file, so it does not matter which settings tab you save from.
 
 1. Start the dashboard (see Run below) and open <http://127.0.0.1:8088/>.
-2. On the `NPMPlus` tab, press `＋ Add instance` once per NPMPlus host and give each one a name, URL, identity, and secret. The URL is the one that serves the admin API, which for NPMPlus is `https://<host>:81` rather than the bare hostname (see [The URL and its port](#the-url-and-its-port)). Two instances are enough for a lab/public split; add more for extra VLANs. If the instance's `https://` certificate is not trusted by this machine, turn on the `self-signed` switch beside its URL (see below).
-3. On the `VLAN routing` tab each instance has its own card: press that card's `Add VLAN` once per Proxmox VLAN tag the instance serves, and give each tag the guest DNS zone that instance can resolve. The tag is normally the number the guest's address repeats (`10.2.2.107` → `2`); a card also accepts the word `untagged` to catch guests that report no VLAN at all. A row is only saved once it has both a tag and a zone, and a tag cannot be mapped twice.
+2. On the `NPMPlus` tab, press `＋ Add instance` once per NPMPlus host and give each one a name, URL, identity, and secret. The URL is the one that serves the admin API, which for NPMPlus is `https://<host>:81` rather than the bare hostname (see [The URL and its port](#the-url-and-its-port)). Two instances are enough to split separate environments; add more for extra VLANs. If the instance's `https://` certificate is not trusted by this machine, turn on the `self-signed` switch beside its URL (see below).
+3. On the `VLAN routing` tab each instance has its own card: press that card's `Add VLAN` once per Proxmox VLAN tag the instance serves, and give each tag the guest DNS zone that instance can resolve. In networks that encode VLANs in addresses, the repeated second and third octets identify the tag; a card also accepts the word `untagged` to catch guests that report no VLAN at all. A row is only saved once it has both a tag and a zone, and a tag cannot be mapped twice.
 4. On the `NPMPlus` tab, enter the public hostname domain that guests should use.
 5. Fill in the PVE Scripts Local endpoint on the `PSL` tab, then press `Save PSL settings`. `Test PSL` and each instance's `Test` button confirm the endpoints before you apply anything.
 6. Enter PVE Scripts Local credentials only if its authentication is enabled. Each NPMPlus identity is that account's **email address** (the API signs in by email, not by username) and its secret is that account's password; give it an account that can manage proxy hosts and view certificates. A sign-in the API refuses names the instance and repeats that.
 7. Give every instance a certificate covering the public domain (`*.<public domain>`) or each exact host. A planned host with no matching unexpired certificate is skipped; a host that has aliases needs one certificate covering all of them.
-8. Each NPMPlus must be able to resolve the guest DNS zone it is mapped to (`lab.lan`, `dmz.lan`, …) so it can forward to `<guest-hostname>.<zone>`.
+8. Each NPMPlus must be able to resolve the guest DNS zone it is mapped to (`internal.example.net`, `dmz.example.net`, …) so it can forward to `<guest-hostname>.<zone>`.
 
 Entries that already exist on an NPMPlus are shown in `Host management`, where you can adopt one to let a guest manage it, release it, edit its guest-specific aliases, or delete it outright (see [Managing the entries](#managing-the-entries)). The same tab's `Latest PSL plan` section shows the most recent preview/apply results and skip reasons; Preview does not create the NPMPlus entries.
 
@@ -46,7 +46,7 @@ Every secret field — an instance's secret and the PVE Scripts Local password �
 {
   "pve_local_password": "env:PVE_LOCAL_PASSWORD",
   "instances": {
-    "lab": {"url": "https://npmplus-lab.lab.lan:81", "identity": "lab@example.net", "secret": "env:NPM_LAB_SECRET"}
+    "lab": {"url": "https://npmplus-one.internal.example.net:81", "identity": "user@example.org", "secret": "env:NPM_LAB_SECRET"}
   }
 }
 ```
@@ -69,7 +69,7 @@ A LAN NPMPlus or PVE Scripts Local normally serves a certificate signed by its o
 Both default to verifying, so nothing changes until you turn one on. A failed connection names the cause and points at the switch:
 
 ```
-Could not reach https://npmplus-lab.lab.lan:81/api/tokens: [SSL: CERTIFICATE_VERIFY_FAILED] certificate
+Could not reach https://npmplus-one.internal.example.net:81/api/tokens: [SSL: CERTIFICATE_VERIFY_FAILED] certificate
 verify failed: self-signed certificate. This machine does not trust that certificate: turn on the
 'self-signed' switch for this connection, or install the issuing CA on this machine. Check the port as
 well: NPMPlus serves its admin API on 81, for example https://host:81
@@ -82,17 +82,17 @@ Instead of skipping the check you can make the machine trust the certificate: im
 An instance needs the address that serves the admin API directly: for NPMPlus that is `https://<host>:81`, and the scheme matters as much as the port, because plain `http://` on 81 answers a `GET` with JSON but answers a login `POST` with a `308` to the `https://` URL, which is refused (a `POST` is never replayed across a redirect, and the message names the URL it points at). Both failures name what came back, and `POST`/`PUT`/`DELETE` are never carried across a redirect:
 
 ```
-GET https://npmplus-lab.lab.lan/api/nginx/proxy-hosts did not return JSON (content-type text/html).
+GET https://npmplus-one.internal.example.net/api/nginx/proxy-hosts did not return JSON (content-type text/html).
 That is a web page rather than the API: check the URL's port. NPMPlus serves its admin API on port 81
 (for example https://host:81), while 80 and 443 usually answer with the proxy host or the default page.
 The reply was: <!DOCTYPE html> <html> <head> <title>Default Page</title> ...
 
-POST http://npmplus-lab.lab.lan/api/tokens was redirected to https://npmplus-lab.lab.lan/api/tokens:
+POST http://npmplus-one.internal.example.net/api/tokens was redirected to https://npmplus-one.internal.example.net/api/tokens:
 following that redirect turns the POST into a GET and drops the request body, so the call can never
 succeed. Use the URL that answers without redirecting instead. NPMPlus serves its admin API on port 81 ...
 
-POST http://npmplus-lab.lab.lan:81/api/tokens failed (308): <html> <head><title>308 Permanent
-Redirect</title></head> ... That is a redirect (308) to https://npmplus-lab.lab.lan:81/api/tokens, not an
+POST http://npmplus-one.internal.example.net:81/api/tokens failed (308): <html> <head><title>308 Permanent
+Redirect</title></head> ... That is a redirect (308) to https://npmplus-one.internal.example.net:81/api/tokens, not an
 API reply: a POST is never resent across a 307/308, and across a 301/302/303 it arrives without its body,
 so the login could only come back unauthenticated and fail later as a permission error. Use the URL it
 points at
@@ -190,12 +190,12 @@ The `Host management` tab lists every proxy host on each configured instance, an
 A guest can answer to more than one public hostname. In the `Host management` tab, edit the aliases on that guest's entry as a comma-separated list:
 
 ```text
-photos, plex-media, requests.example.net
+photos, video-service, requests.example.net
 ```
 
 A name without a dot is a label under the public hostname domain; a name with a dot is used as it stands. Saving an empty list removes the guest-specific aliases. Existing settings that used the older guest-wide `aliases` list are still honored until you save aliases for that guest route in `Host management`; the per-entry list then takes precedence for that instance and guest.
 
-The extra names are written on the guest's own proxy host, so `immich.bagrace.net` and `photos.bagrace.net` reach the same container through one entry; the guest's own name always comes first, because that is the name the app records the host under. A name belongs to one host only: a claim on another guest's hostname, or on a name another guest's alias already claimed, is dropped and reported as a skipped item rather than written. A host with aliases needs a certificate covering every one of its names — normally the wildcard for the public domain — and is skipped with the uncovered names listed when it has none. An alias counts as the guest still being present, and an entry serving a name this app does not know for that guest is never deleted by itself: it is reported, and `Host management` is where the entry can be deleted.
+The extra names are written on the guest's own proxy host, so `media-service.example.net` and `photos.example.net` reach the same container through one entry; the guest's own name always comes first, because that is the name the app records the host under. A name belongs to one host only: a claim on another guest's hostname, or on a name another guest's alias already claimed, is dropped and reported as a skipped item rather than written. A host with aliases needs a certificate covering every one of its names — normally the wildcard for the public domain — and is skipped with the uncovered names listed when it has none. An alias counts as the guest still being present, and an entry serving a name this app does not know for that guest is never deleted by itself: it is reported, and `Host management` is where the entry can be deleted.
 
 The dashboard needs `reverse_proxy_automation/web/index.html`; the launcher stops with an error at startup if that file is missing.
 

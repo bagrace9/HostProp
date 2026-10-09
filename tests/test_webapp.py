@@ -29,7 +29,7 @@ class DashboardAssetTests(unittest.TestCase):
 
     def test_new_configuration_fields_start_without_preset_values(self):
         page = (WEB_DIR / "index.html").read_text(encoding="utf-8")
-        for preset in ('value="bagrace.net"', 'value="npmplus-lab,npmplus-public"', 'value="300"', 'value="10"'):
+        for preset in ('value="example.net"', 'value="npmplus-one,npmplus-two"', 'value="300"', 'value="10"'):
             self.assertNotIn(preset, page)
         self.assertIn('config.poll_interval_seconds===""?null:Number(config.poll_interval_seconds)', page)
         self.assertIn('config.max_deletes_per_run===""?null:Number(config.max_deletes_per_run)', page)

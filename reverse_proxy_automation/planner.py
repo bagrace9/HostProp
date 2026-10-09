@@ -10,7 +10,7 @@ DOMAIN_PATTERN = re.compile(
 # The VLAN key a guest that states no tag routes by.
 UNTAGGED_TAG = "untagged"
 # PVE Scripts Local names the script it installed, and those names end in ".sh"
-# ("photoprism.sh"): the word before the period is the guest's hostname. The same
+# ("photo-service.sh"): the word before the period is the guest's hostname. The same
 # holds for a cached guest hostname that carries the suffix, so the rule is
 # applied to whichever name wins, not just to the script-name fallback.
 SCRIPT_SUFFIX = ".sh"
@@ -31,8 +31,8 @@ def vlan_from_address(address):
 
     A PSL deployment whose response has no `lxc_config` still reports the guest's
     web UI address, and a network that segments by VLAN repeats the tag in the
-    second and third octet (10.2.2.107 is VLAN 2). Only that repeated spelling is
-    read as a tag: anything else is left alone rather than guessed at.
+    second and third octet. Only that repeated spelling is read as a tag: anything
+    else is left alone rather than guessed at.
     """
     octets = str(address or "").strip().split(".")
     if len(octets) != 4:
@@ -43,7 +43,7 @@ def vlan_from_address(address):
         return ""
     if any(number < 0 or number > 255 for number in numbers):
         return ""
-    # Spelled the same number twice, so "10.2.2.107" is tagged and "10.2.5.107" is not.
+    # The second and third octets must repeat, or the VLAN is left unspecified.
     if not numbers[1] or octets[1] != octets[2]:
         return ""
     return str(numbers[1])
@@ -111,8 +111,8 @@ def parse_aliases(text, public_domain):
 
     One guest per line, written `guest = name, name`. A name without a dot is a
     label under the public domain and a name with one is used as it stands, so
-    `immich = photos` gives the guest immich one host that answers to both
-    immich.<public domain> and photos.<public domain>. Blank lines and anything
+    `media-service = photos` gives the guest media-service one host that answers to both
+    media-service.<public domain> and photos.<public domain>. Blank lines and anything
     after a # are ignored, and a line that cannot be read is reported rather than
     guessed at: a typo must not quietly drop a name from a host.
     """

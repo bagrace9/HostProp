@@ -22,14 +22,14 @@ def store_in(directory):
 
 
 LEGACY_CONFIG = {
-    "pve_local_url": "https://psl.lab.lan:3000",
-    "npm_lab_url": "https://npmplus-lab.lab.lan:81",
-    "npm_lab_identity": "lab@example.net",
+    "pve_local_url": "https://psl.internal.example.net:3000",
+    "npm_lab_url": "https://npmplus-one.internal.example.net:81",
+    "npm_lab_identity": "user@example.org",
     "npm_lab_secret": "lab-secret",
-    "npm_public_url": "https://npmplus-public.public.lan:81",
-    "npm_public_identity": "public@example.net",
+    "npm_public_url": "https://npmplus-two.public.example.net:81",
+    "npm_public_identity": "public@example.org",
     "npm_public_secret": "public-secret",
-    "vlan_map": {"10": {"instance": "lab", "zone": "lab.lan"}},
+    "vlan_map": {"10": {"instance": "lab", "zone": "internal.example.net"}},
 }
 
 
@@ -37,10 +37,10 @@ class LegacyMigrationTests(unittest.TestCase):
     def test_flat_legacy_keys_become_named_instances(self):
         config = normalize_config(LEGACY_CONFIG)
         self.assertEqual(sorted(config["instances"]), ["lab", "public"])
-        self.assertEqual(config["instances"]["lab"]["url"], "https://npmplus-lab.lab.lan:81")
+        self.assertEqual(config["instances"]["lab"]["url"], "https://npmplus-one.internal.example.net:81")
         self.assertEqual(config["instances"]["lab"]["secret"], "lab-secret")
         self.assertEqual(config["instances"]["lab"]["label"], "Lab NPMPlus")
-        self.assertEqual(config["vlan_map"], {"10": {"instance": "lab", "zone": "lab.lan"}})
+        self.assertEqual(config["vlan_map"], {"10": {"instance": "lab", "zone": "internal.example.net"}})
 
     def test_saving_a_legacy_file_rewrites_it_without_the_flat_keys(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -50,7 +50,7 @@ class LegacyMigrationTests(unittest.TestCase):
             for stale in ("npm_lab_url", "npm_lab_identity", "npm_lab_secret", "npm_public_url"):
                 self.assertNotIn(stale, saved)
             on_disk = json.loads(store.path.read_text(encoding="utf-8"))
-            self.assertEqual(on_disk["instances"]["public"]["identity"], "public@example.net")
+            self.assertEqual(on_disk["instances"]["public"]["identity"], "public@example.org")
             self.assertEqual(on_disk["instances"]["public"]["secret"], "public-secret")
 
 
@@ -88,28 +88,28 @@ class InstanceConfigTests(unittest.TestCase):
             config = store.save({
                 "public_domain": "example.net",
                 "instances": {
-                    "lab": {"label": "Lab NPMPlus", "url": "https://lab.lan:81", "identity": "a", "secret": "s1"},
-                    "dmz": {"label": "", "url": "https://dmz.lan:81", "identity": "b", "secret": "s2"},
-                    "public": {"label": "Public", "url": "https://public.lan:81", "identity": "c", "secret": "s3"},
+                    "lab": {"label": "Lab NPMPlus", "url": "https://internal.example.net:81", "identity": "a", "secret": "s1"},
+                    "dmz": {"label": "", "url": "https://dmz.example.net:81", "identity": "b", "secret": "s2"},
+                    "public": {"label": "Public", "url": "https://public.example.net:81", "identity": "c", "secret": "s3"},
                 },
                 "vlan_map": {
-                    "10": {"instance": "lab", "zone": "lab.lan"},
-                    "30": {"instance": "DMZ", "zone": "dmz.lan"},
-                    "20": {"instance": "public", "zone": "public.lan."},
+                    "10": {"instance": "lab", "zone": "internal.example.net"},
+                    "30": {"instance": "DMZ", "zone": "dmz.example.net"},
+                    "20": {"instance": "public", "zone": "public.example.net."},
                 },
             })
             self.assertEqual(sorted(config["instances"]), ["dmz", "lab", "public"])
             # Instance names and zones are normalised on the way in.
-            self.assertEqual(config["vlan_map"]["30"], {"instance": "dmz", "zone": "dmz.lan"})
-            self.assertEqual(config["vlan_map"]["20"]["zone"], "public.lan")
+            self.assertEqual(config["vlan_map"]["30"], {"instance": "dmz", "zone": "dmz.example.net"})
+            self.assertEqual(config["vlan_map"]["20"]["zone"], "public.example.net")
             self.assertEqual(instance_label("dmz", config["instances"]["dmz"]), "dmz NPMPlus")
 
     def test_blank_secret_keeps_the_stored_value(self):
         with tempfile.TemporaryDirectory() as directory:
             store = store_in(directory)
-            store.save({"instances": {"lab": {"url": "https://lab.lan:81", "identity": "a", "secret": "keep-me"}}})
+            store.save({"instances": {"lab": {"url": "https://internal.example.net:81", "identity": "a", "secret": "keep-me"}}})
             saved = store.save({
-                "instances": {"lab": {"label": "Lab", "url": "https://lab.lan:81", "identity": "a", "secret": ""}},
+                "instances": {"lab": {"label": "Lab", "url": "https://internal.example.net:81", "identity": "a", "secret": ""}},
             })
             self.assertEqual(saved["instances"]["lab"]["secret"], "keep-me")
             self.assertEqual(saved["instances"]["lab"]["label"], "Lab")
@@ -117,21 +117,21 @@ class InstanceConfigTests(unittest.TestCase):
     def test_unsubmitted_instance_keys_are_left_alone(self):
         with tempfile.TemporaryDirectory() as directory:
             store = store_in(directory)
-            store.save({"instances": {"lab": {"url": "https://lab.lan:81", "secret": "s1"}}})
-            saved = store.save({"vlan_map": {"10": {"instance": "lab", "zone": "lab.lan"}}})
-            self.assertEqual(saved["instances"]["lab"]["url"], "https://lab.lan:81")
+            store.save({"instances": {"lab": {"url": "https://internal.example.net:81", "secret": "s1"}}})
+            saved = store.save({"vlan_map": {"10": {"instance": "lab", "zone": "internal.example.net"}}})
+            self.assertEqual(saved["instances"]["lab"]["url"], "https://internal.example.net:81")
 
     def test_removing_an_instance_drops_it_from_the_saved_file(self):
         with tempfile.TemporaryDirectory() as directory:
             store = store_in(directory)
-            store.save({"instances": {"lab": {"url": "https://lab.lan:81"}, "dmz": {"url": "https://dmz.lan:81"}}})
-            saved = store.save({"instances": {"lab": {"url": "https://lab.lan:81"}}})
+            store.save({"instances": {"lab": {"url": "https://internal.example.net:81"}, "dmz": {"url": "https://dmz.example.net:81"}}})
+            saved = store.save({"instances": {"lab": {"url": "https://internal.example.net:81"}}})
             self.assertEqual(sorted(saved["instances"]), ["lab"])
 
     def test_vlan_row_must_reference_a_configured_instance(self):
         config = normalize_config({
-            "instances": {"lab": {"url": "https://lab.lan:81"}},
-            "vlan_map": {"10": {"instance": "dmz", "zone": "dmz.lan"}},
+            "instances": {"lab": {"url": "https://internal.example.net:81"}},
+            "vlan_map": {"10": {"instance": "dmz", "zone": "dmz.example.net"}},
         })
         with self.assertRaises(ValueError) as caught:
             validate_config(config, allow_incomplete=True)
@@ -157,7 +157,7 @@ class InstanceConfigTests(unittest.TestCase):
 
 class SelfSignedSwitchTests(unittest.TestCase):
     def test_verification_is_on_unless_the_switch_is_off(self):
-        config = normalize_config({"instances": {"lab": {"url": "https://lab.lan:81"}}})
+        config = normalize_config({"instances": {"lab": {"url": "https://internal.example.net:81"}}})
         self.assertTrue(config["instances"]["lab"]["verify_tls"])
         self.assertTrue(config["pve_local_verify_tls"])
 
@@ -166,7 +166,7 @@ class SelfSignedSwitchTests(unittest.TestCase):
             store = store_in(directory)
             store.save({
                 "pve_local_verify_tls": False,
-                "instances": {"lab": {"url": "https://lab.lan:81", "verify_tls": False}},
+                "instances": {"lab": {"url": "https://internal.example.net:81", "verify_tls": False}},
             })
             on_disk = json.loads(store.path.read_text(encoding="utf-8"))
             self.assertFalse(on_disk["instances"]["lab"]["verify_tls"])
@@ -180,8 +180,8 @@ class SelfSignedSwitchTests(unittest.TestCase):
             store = store_in(directory)
             store.save({
                 "instances": {
-                    "lab": {"url": "https://lab.lan:81", "verify_tls": False},
-                    "dmz": {"url": "https://dmz.lan:81"},
+                    "lab": {"url": "https://internal.example.net:81", "verify_tls": False},
+                    "dmz": {"url": "https://dmz.example.net:81"},
                 },
             })
             saved = store.load()
@@ -216,14 +216,14 @@ class PublicConfigTests(unittest.TestCase):
     def test_secrets_never_leave_the_server(self):
         config = normalize_config({
             "pve_local_password": "psl-password",
-            "instances": {"lab": {"url": "https://lab.lan:81", "identity": "a", "secret": "api-secret"}},
+            "instances": {"lab": {"url": "https://internal.example.net:81", "identity": "a", "secret": "api-secret"}},
         })
         public = public_config(config)
         self.assertTrue(public["pve_local_password_configured"])
         self.assertNotIn("pve_local_password", public)
         self.assertEqual(public["instances"]["lab"], {
             "label": "",
-            "url": "https://lab.lan:81",
+            "url": "https://internal.example.net:81",
             "identity": "a",
             "secret_configured": True,
             "secret_env": "",
@@ -297,7 +297,7 @@ class SecretReferenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = store_in(directory)
             store.save({
-                "instances": {"lab": {"url": "https://lab.lan:81", "identity": "a", "secret": "env:NPM_LAB_SECRET"}},
+                "instances": {"lab": {"url": "https://internal.example.net:81", "identity": "a", "secret": "env:NPM_LAB_SECRET"}},
             })
             on_disk = store.path.read_text(encoding="utf-8")
             self.assertIn("env:NPM_LAB_SECRET", on_disk)
@@ -312,8 +312,8 @@ class SecretReferenceTests(unittest.TestCase):
     def test_a_blank_submit_keeps_a_stored_reference(self):
         with tempfile.TemporaryDirectory() as directory:
             store = store_in(directory)
-            store.save({"instances": {"lab": {"url": "https://lab.lan:81", "secret": "env:NPM_LAB_SECRET"}}})
-            saved = store.save({"instances": {"lab": {"url": "https://lab.lan:81", "identity": "b", "secret": ""}}})
+            store.save({"instances": {"lab": {"url": "https://internal.example.net:81", "secret": "env:NPM_LAB_SECRET"}}})
+            saved = store.save({"instances": {"lab": {"url": "https://internal.example.net:81", "identity": "b", "secret": ""}}})
             self.assertEqual(saved["instances"]["lab"]["secret"], "env:NPM_LAB_SECRET")
 
     def test_the_psl_password_reference_is_reported_by_name(self):
