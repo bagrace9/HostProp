@@ -3,6 +3,7 @@ import base64
 import hmac
 import ipaddress
 import json
+import logging
 import os
 import re
 import sys
@@ -260,6 +261,10 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main(argv=None):
+    logging.basicConfig(
+        level=os.environ.get("LOG_LEVEL", "INFO"),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
     parser = argparse.ArgumentParser(description="Run the reverse-proxy automation dashboard and watcher.")
     parser.add_argument("--host", default=os.environ.get("WEB_HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("WEB_PORT", "8088")))

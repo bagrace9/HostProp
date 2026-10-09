@@ -5,7 +5,9 @@ import socket
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from unittest import mock
 
+from reverse_proxy_automation import webapp
 from reverse_proxy_automation.webapp import DashboardServer, Handler, WEB_DIR
 
 
@@ -251,6 +253,50 @@ class DashboardRequestSecurityTests(unittest.TestCase):
 
     def test_request_handlers_use_a_finite_socket_timeout(self):
         self.assertEqual(Handler.timeout, 30)
+
+
+class DashboardLoggingTests(unittest.TestCase):
+    def test_main_configures_info_logging_by_default(self):
+        sync_service = mock.Mock()
+        server = mock.Mock()
+        server.serve_forever.side_effect = KeyboardInterrupt
+
+        with (
+            mock.patch.dict("os.environ", {}, clear=True),
+            mock.patch.object(webapp.logging, "basicConfig") as basic_config,
+            mock.patch.object(webapp, "ConfigStore") as config_store_type,
+            mock.patch.object(webapp, "SyncService", return_value=sync_service),
+            mock.patch.object(webapp, "DashboardServer", return_value=server),
+        ):
+            config_store_type.return_value.load.return_value = {}
+            self.assertEqual(webapp.main(["--host", "127.0.0.1"]), 0)
+
+        basic_config.assert_called_once_with(
+            level="INFO",
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        )
+        sync_service.stop.assert_called_once()
+        server.server_close.assert_called_once()
+
+    def test_main_uses_the_configured_log_level(self):
+        sync_service = mock.Mock()
+        server = mock.Mock()
+        server.serve_forever.side_effect = KeyboardInterrupt
+
+        with (
+            mock.patch.dict("os.environ", {"LOG_LEVEL": "DEBUG"}),
+            mock.patch.object(webapp.logging, "basicConfig") as basic_config,
+            mock.patch.object(webapp, "ConfigStore") as config_store_type,
+            mock.patch.object(webapp, "SyncService", return_value=sync_service),
+            mock.patch.object(webapp, "DashboardServer", return_value=server),
+        ):
+            config_store_type.return_value.load.return_value = {}
+            self.assertEqual(webapp.main(["--host", "127.0.0.1"]), 0)
+
+        basic_config.assert_called_once_with(
+            level="DEBUG",
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        )
 
     def test_guest_aliases_are_only_edited_in_host_management(self):
         page = (WEB_DIR / "index.html").read_text(encoding="utf-8")
