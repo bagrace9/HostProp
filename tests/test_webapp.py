@@ -3,8 +3,12 @@ import base64
 import http.client
 import socket
 import threading
+import tempfile
 import unittest
+from contextlib import redirect_stdout
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from io import StringIO
+from pathlib import Path
 from unittest import mock
 
 from reverse_proxy_automation import webapp
@@ -297,6 +301,41 @@ class DashboardLoggingTests(unittest.TestCase):
             level="DEBUG",
             format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         )
+
+    def test_main_rejects_an_invalid_log_level_without_traceback(self):
+        with (
+            mock.patch.dict("os.environ", {"LOG_LEVEL": "bogus"}),
+            mock.patch.object(webapp.logging, "basicConfig") as basic_config,
+            self.assertRaises(SystemExit) as caught,
+            redirect_stdout(StringIO()),
+        ):
+            webapp.main(["--host", "127.0.0.1"])
+
+        self.assertEqual(caught.exception.code, 2)
+        basic_config.assert_not_called()
+
+    def test_main_starts_with_default_ipv6_host_allowlist(self):
+        started = threading.Event()
+
+        def stop_after_start(_server, poll_interval):
+            self.assertEqual(poll_interval, 0.5)
+            started.set()
+            raise KeyboardInterrupt
+
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.dict("os.environ", {}, clear=True), \
+                mock.patch.object(DashboardServer, "serve_forever", stop_after_start), \
+                redirect_stdout(StringIO()) as output:
+            result = webapp.main([
+                "--host", "127.0.0.1",
+                "--port", "0",
+                "--config", str(Path(directory) / "config.json"),
+                "--state", str(Path(directory) / "state.json"),
+            ])
+
+        self.assertEqual(result, 0)
+        self.assertTrue(started.is_set())
+        self.assertIn("Dashboard listening at http://127.0.0.1:0/", output.getvalue())
 
     def test_guest_aliases_are_only_edited_in_host_management(self):
         page = (WEB_DIR / "index.html").read_text(encoding="utf-8")

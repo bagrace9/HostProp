@@ -32,6 +32,11 @@ DEFAULT_ALLOWED_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 def _normalized_host(host_value):
     """Return a normalized Host name, or None for malformed authority values."""
+    host_value = host_value.strip()
+    try:
+        return ipaddress.ip_address(host_value).compressed
+    except ValueError:
+        pass
     try:
         parsed = urlparse("//" + host_value)
         hostname = parsed.hostname
@@ -261,16 +266,20 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main(argv=None):
-    logging.basicConfig(
-        level=os.environ.get("LOG_LEVEL", "INFO"),
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
     parser = argparse.ArgumentParser(description="Run the reverse-proxy automation dashboard and watcher.")
     parser.add_argument("--host", default=os.environ.get("WEB_HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("WEB_PORT", "8088")))
     parser.add_argument("--config", default=os.environ.get("APP_CONFIG_PATH", "./data/app-config.json"))
     parser.add_argument("--state", default=os.environ.get("SYNC_STATE_PATH", "./data/sync-state.json"))
     args = parser.parse_args(argv)
+
+    log_level = os.environ.get("LOG_LEVEL", "INFO")
+    if not isinstance(logging.getLevelName(log_level.upper()), int):
+        parser.error(f"Invalid LOG_LEVEL {log_level!r}; choose DEBUG, INFO, WARNING, ERROR, or CRITICAL")
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
 
     app_password = os.environ.get("APP_PASSWORD", "")
     allowed_hosts = set(DEFAULT_ALLOWED_HOSTS)
