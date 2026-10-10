@@ -10,13 +10,8 @@ from pathlib import Path
 from time import perf_counter
 
 from .clients import ApiError, NpmPlusClient, PveScriptsLocalClient
-from .planner import (
-    DOMAIN_PATTERN,
-    HOST_LABEL_PATTERN,
-    parse_exclusions,
-    parse_aliases,
-    plan_hosts,
-)
+from .integrations import NpmPlusDestinationAdapter, PslSourceAdapter
+from .planner import DOMAIN_PATTERN, HOST_LABEL_PATTERN, parse_aliases
 from .sync import adopted_host_ids, adopt_host, forget_host, load_state, reconcile, save_state
 
 
@@ -445,9 +440,15 @@ def public_config(config, environ=None):
 
 
 class SyncService:
-    def __init__(self, config_store, state_path):
+    def __init__(self, config_store, state_path, source_adapter=None, destination_adapters=None):
         self.config_store = config_store
         self.state_path = Path(state_path)
+        self.source_adapter = source_adapter or PslSourceAdapter(self._source_client)
+        self.destination_adapters = tuple(
+            destination_adapters
+            if destination_adapters is not None
+            else [NpmPlusDestinationAdapter(self._instance_client, reconcile)]
+        )
         self.lock = threading.RLock()
         self.run_lock = threading.Lock()
         self.wake = threading.Event()
@@ -508,14 +509,9 @@ class SyncService:
             # An unresolved "env:" reference stops the run here, before any client
             # is built with an empty password.
             check_secret_references(config)
-            source = PveScriptsLocalClient(
-                config["pve_local_url"],
-                config["pve_local_username"],
-                resolve_secret(config["pve_local_password"]),
-                verify_tls=_as_bool(config.get("pve_local_verify_tls"), True),
-            )
             psl_started = perf_counter()
-            scripts = source.installed_scripts(
+            guests = self.source_adapter.read(
+                config,
                 refresh_lxc_config=refresh_lxc_config,
                 progress_callback=(
                     lambda current, total, script_id, container_id: self._set_status(
@@ -529,95 +525,101 @@ class SyncService:
             )
             psl_seconds = perf_counter() - psl_started
             self._set_status(
-                message=f"Read {len(scripts)} installed record(s) from PSL in {psl_seconds:.2f}s; building routes."
+                message=(
+                    f"Read {len(guests)} guest record(s) from PSL in {psl_seconds:.2f}s; "
+                    "building destination plans."
+                )
             )
             planning_started = perf_counter()
-            planned = plan_hosts(
-                scripts,
-                config["vlan_map"],
-                config["public_domain"],
-                parse_exclusions(config["excluded_guest_hostnames"]),
-                config.get("aliases"),
-                instance_aliases=config.get("entry_aliases"),
-            )
-            port_overrides = config.get("entry_port_overrides") or {}
-            for host in planned["plan"]:
-                override = port_overrides.get(f"{host['instance']}:{host['guest_hostname']}")
-                if override is not None:
-                    host["forward_port"] = int(override)
+            destination_plans = [
+                (adapter, adapter.plan(guests, config))
+                for adapter in self.destination_adapters
+            ]
             planning_seconds = perf_counter() - planning_started
 
             state = load_state(self.state_path)
-            allow_delete = bool(config.get("delete_removed_hosts", False))
-            planned_instances = {host["instance"] for host in planned["plan"]}
-            needed = set(planned_instances)
-            if allow_delete:
-                # An instance may need visiting only to delete hosts for removed guests.
-                needed |= {key.partition(":")[0] for key in state["managed"]} & set(config["instances"])
-
-            clients = {}
-            for instance in sorted(needed):
-                entry = config["instances"].get(instance) or {}
-                if not entry.get("url"):
-                    if instance in planned_instances:
-                        raise ValueError(f"Set the URL for NPMPlus instance '{instance}' before syncing")
-                    continue
-                clients[instance] = self._instance_client(instance, entry)
-
             try:
                 self._set_status(
-                    message=f"Built {len(planned['plan'])} route(s) in {planning_seconds:.2f}s; checking NPMPlus."
+                    message=(
+                        f"Built {len(destination_plans)} destination plan(s) in "
+                        f"{planning_seconds:.2f}s; applying destinations."
+                    )
                 )
-                npm_started = perf_counter()
-                rows = reconcile(
-                    planned["plan"],
-                    clients,
-                    state,
-                    apply_changes=apply_changes,
-                    present_domains=planned["present"],
-                    allow_delete=allow_delete,
-                    max_deletes=config["max_deletes_per_run"] or 0,
-                    planned_names=planned["names_by_domain"],
-                )
-                npm_seconds = perf_counter() - npm_started
-                for row in rows:
-                    if row[0] != "OK":
-                        LOGGER.info(
-                            "Sync result: status=%s instance=%s target=%s",
-                            row[0],
-                            row[1],
-                            row[2],
-                        )
+                rows = []
+                destination_seconds = {}
+                for adapter, destination_plan in destination_plans:
+                    destination_started = perf_counter()
+                    destination_rows = adapter.apply(
+                        destination_plan,
+                        config,
+                        state,
+                        apply_changes=apply_changes,
+                    )
+                    destination_seconds[adapter.key] = round(
+                        perf_counter() - destination_started, 3
+                    )
+                    rows.extend((adapter.label, *row) for row in destination_rows)
+                    for row in destination_rows:
+                        if row[0] != "OK":
+                            LOGGER.info(
+                                "Sync result: destination=%s status=%s target=%s resource=%s",
+                                adapter.label,
+                                row[0],
+                                row[1],
+                                row[2],
+                            )
             finally:
                 # Persist ownership of anything already created, even if a later step failed.
                 if apply_changes:
                     save_state(self.state_path, state)
             now = datetime.now(timezone.utc).isoformat()
-            actionable = sum(row[0] in {"CREATE", "UPDATE", "DELETE", "DRY-CREATE", "DRY-UPDATE", "DRY-DELETE"} for row in rows)
+            actionable = sum(
+                row[1] in {"CREATE", "UPDATE", "DELETE", "DRY-CREATE", "DRY-UPDATE", "DRY-DELETE"}
+                for row in rows
+            )
             skipped_rows = [
-                {"name": name, "reason": reason}
-                for name, reason in planned["skipped"]
+                {"name": name, "reason": reason, "destination": adapter.label}
+                for adapter, destination_plan in destination_plans
+                for name, reason in destination_plan.get("skipped", [])
             ]
             skipped_rows.extend(
-                {"name": row[2], "reason": row[3], "instance": row[1], "status": row[0]}
-                for row in rows if row[0] in {"CONFLICT", "SKIP", "ERROR"}
+                {
+                    "name": row[3],
+                    "reason": row[4],
+                    "instance": row[2],
+                    "destination": row[0],
+                    "status": row[1],
+                }
+                for row in rows if row[1] in {"CONFLICT", "SKIP", "ERROR"}
             )
             mode = "Applied" if apply_changes else "Previewed"
             timings = {
                 "psl_read_seconds": round(psl_seconds, 3),
                 "planning_seconds": round(planning_seconds, 3),
-                "npmplus_seconds": round(npm_seconds, 3),
-                "source_records": len(scripts),
+                "npmplus_seconds": destination_seconds.get("npmplus", 0),
+                "destinations_seconds": destination_seconds,
+                "source_records": len(guests),
             }
+            guest_count = max(
+                (plan.get("containers", len(guests)) for _, plan in destination_plans),
+                default=len(guests),
+            )
             self._set_status(
                 state="ok",
                 message=f"{mode} {actionable} change(s); {len(skipped_rows)} item(s) need attention.",
                 last_check=now,
                 last_apply=now if apply_changes else self.get_status().get("last_apply"),
-                # Guests are counted per container: PSL keeps one record per install
-                # attempt, and several records of one container are one guest.
-                guest_count=planned["containers"],
-                planned=[{"status": row[0], "instance": row[1], "domain": row[2], "details": row[3]} for row in rows],
+                guest_count=guest_count,
+                planned=[
+                    {
+                        "destination": row[0],
+                        "status": row[1],
+                        "instance": row[2],
+                        "domain": row[3],
+                        "details": row[4],
+                    }
+                    for row in rows
+                ],
                 skipped=skipped_rows,
                 timings=timings,
             )
@@ -632,6 +634,16 @@ class SyncService:
                 skipped=[],
             )
             return self.get_status()
+
+    @staticmethod
+    def _source_client(config):
+        """Build PSL's client without exposing source-specific setup to destinations."""
+        return PveScriptsLocalClient(
+            config["pve_local_url"],
+            config["pve_local_username"],
+            resolve_secret(config["pve_local_password"]),
+            verify_tls=_as_bool(config.get("pve_local_verify_tls"), True),
+        )
 
     @staticmethod
     def _instance_client(instance, entry):

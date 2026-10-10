@@ -1,6 +1,7 @@
 import unittest
 
 from reverse_proxy_automation.clients import select_certificate, select_shared_certificate
+from reverse_proxy_automation.integrations import normalize_psl_record
 from reverse_proxy_automation.planner import (
     parse_aliases,
     parse_exclusions,
@@ -26,7 +27,7 @@ def guest(hostname, vlan="10", port=8080, **overrides):
         "lxc_config": {"hostname": hostname, "net_vlan": vlan},
     }
     script.update(overrides)
-    return script
+    return normalize_psl_record(script)
 
 
 class PlannerTests(unittest.TestCase):
@@ -277,7 +278,7 @@ class ContainerIdentityTests(unittest.TestCase):
 
     def test_a_record_that_cannot_be_refreshed_is_skipped_instead_of_routed_stale(self):
         current = self.record("photos.sh", "10", 8080, 120, "101")
-        current["_refresh_error"] = "Could not refresh container 101: SSH connection failed"
+        current["refresh_error"] = "Could not refresh container 101: SSH connection failed"
 
         result = plan_hosts([current], VLAN_MAP, "example.net")
 
@@ -290,7 +291,7 @@ class ContainerIdentityTests(unittest.TestCase):
 
     def test_refresh_failure_uses_a_saved_ip_and_port_without_an_error_row(self):
         current = self.record("photos.sh", "10", 8080, 120, "101", address="127.10.10.5")
-        current["_refresh_error"] = "Could not refresh container 101: SSH connection failed"
+        current["refresh_error"] = "Could not refresh container 101: SSH connection failed"
 
         result = plan_hosts([current], VLAN_MAP, "example.net")
 
@@ -300,7 +301,7 @@ class ContainerIdentityTests(unittest.TestCase):
 
     def test_refresh_failure_without_a_saved_port_still_skips_the_record(self):
         current = self.record("photos.sh", "10", None, 120, "101", address="127.10.10.5")
-        current["_refresh_error"] = "Could not refresh container 101: SSH connection failed"
+        current["refresh_error"] = "Could not refresh container 101: SSH connection failed"
 
         result = plan_hosts([current], VLAN_MAP, "example.net")
 
@@ -319,7 +320,7 @@ class ContainerIdentityTests(unittest.TestCase):
 
     def test_refresh_errors_on_superseded_records_are_not_reported(self):
         older = self.record("oldphotos.sh", "10", 8080, 120, "101", status="failed")
-        older["_refresh_error"] = "Could not refresh old PSL record"
+        older["refresh_error"] = "Could not refresh old PSL record"
         current = self.record("photos.sh", "10", 8080, 121, "101")
 
         result = plan_hosts([older, current], VLAN_MAP, "example.net")

@@ -75,6 +75,26 @@ class FakeNpmPlus:
         self.hosts.pop(str(host_id), None)
 
 
+class FakeGuestSource:
+    def read(self, config, refresh_lxc_config=False, progress_callback=None):
+        return [{"id": 1, "name": "photos", "container_id": "101"}]
+
+
+class FakeDestination:
+    def __init__(self, key, status):
+        self.key = key
+        self.label = key
+        self.status = status
+        self.received_guests = None
+
+    def plan(self, guests, config):
+        self.received_guests = guests
+        return {"plan": [], "skipped": [], "containers": 1}
+
+    def apply(self, plan, config, state, apply_changes=False):
+        return [(self.status, self.key, f"{self.key}-resource", "checked")]
+
+
 def service_for(directory, instances, vlan_map):
     store = ConfigStore(Path(directory) / "app-config.json")
     store.save({
@@ -87,6 +107,39 @@ def service_for(directory, instances, vlan_map):
 
 
 class MultiInstanceRunTests(unittest.TestCase):
+    def test_one_source_run_can_apply_multiple_destination_adapters(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfigStore(Path(directory) / "app-config.json")
+            store.save({
+                "pve_local_url": "https://psl.example.net",
+                "public_domain": "example.net",
+                "instances": {},
+                "vlan_map": {},
+            })
+            destinations = [
+                FakeDestination("npmplus", "CREATE"),
+                FakeDestination("checkmk", "UPDATE"),
+            ]
+            service = SyncService(
+                store,
+                Path(directory) / "sync-state.json",
+                source_adapter=FakeGuestSource(),
+                destination_adapters=destinations,
+            )
+            try:
+                status = service.run_once()
+            finally:
+                service.stop()
+
+        self.assertEqual(status["state"], "ok", status["message"])
+        self.assertEqual([item["destination"] for item in status["planned"]], [
+            "npmplus", "checkmk",
+        ])
+        self.assertTrue(all(adapter.received_guests == [{"id": 1, "name": "photos", "container_id": "101"}]
+                            for adapter in destinations))
+        self.assertEqual(status["guest_count"], 1)
+        self.assertEqual(set(status["timings"]["destinations_seconds"]), {"npmplus", "checkmk"})
+
     def test_non_ok_sync_rows_are_logged_without_response_details(self):
         previous_scripts = list(PSL_SCRIPTS)
         self.addCleanup(lambda: PSL_SCRIPTS.__setitem__(slice(None), previous_scripts))
@@ -120,8 +173,8 @@ class MultiInstanceRunTests(unittest.TestCase):
 
         self.assertEqual(status["state"], "ok", status["message"])
         self.assertEqual(log_info.call_count, 2)
-        self.assertEqual(log_info.call_args_list[0].args[1:], ("CREATE", "lab", "photos.example.net"))
-        self.assertEqual(log_info.call_args_list[1].args[1:], ("CONFLICT", "lab", "other.example.net"))
+        self.assertEqual(log_info.call_args_list[0].args[1:], ("NPMPlus", "CREATE", "lab", "photos.example.net"))
+        self.assertEqual(log_info.call_args_list[1].args[1:], ("NPMPlus", "CONFLICT", "lab", "other.example.net"))
 
     def test_watcher_runs_immediately_on_startup_when_enabled(self):
         with tempfile.TemporaryDirectory() as directory:

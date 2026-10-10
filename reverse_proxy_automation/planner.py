@@ -16,10 +16,9 @@ UNTAGGED_TAG = "untagged"
 SCRIPT_SUFFIX = ".sh"
 
 
-def guest_hostname(script):
-    """The guest hostname for a PSL record: the word before a trailing ".sh"."""
-    config = script.get("lxc_config") or {}
-    name = str(config.get("hostname") or script.get("script_name") or "")
+def guest_hostname(guest):
+    """The guest hostname, using its reported hostname or source name."""
+    name = str(guest.get("hostname") or guest.get("name") or "")
     name = name.strip().lower().rstrip(".")
     if name.endswith(SCRIPT_SUFFIX):
         name = name[: -len(SCRIPT_SUFFIX)].strip()
@@ -49,20 +48,14 @@ def vlan_from_address(address):
     return str(numbers[1])
 
 
-def vlan_key_for(script, config):
-    """The VLAN tag a guest routes by, plus a note when its address supplied it.
-
-    A record whose cached LXC config carries a tag routes by that tag, and one
-    whose config has no tag is a guest that really is untagged. A record with no
-    config at all comes from a PSL deployment that never sends one, and there the
-    guest address is the only statement of its VLAN.
-    """
-    raw_vlan = config.get("net_vlan")
+def vlan_key_for(guest):
+    """The VLAN tag a guest routes by, plus a note when its address supplied it."""
+    raw_vlan = guest.get("network_vlan")
     if raw_vlan is not None and str(raw_vlan).strip():
         return str(raw_vlan).strip(), ""
-    if config:
+    if guest.get("has_network_config"):
         return UNTAGGED_TAG, ""
-    address = str(script.get("web_ui_ip") or "").strip()
+    address = str(guest.get("address") or "").strip()
     tag = vlan_from_address(address)
     if tag:
         return tag, f" (from web_ui_ip {address})"
@@ -71,8 +64,8 @@ def vlan_key_for(script, config):
     return UNTAGGED_TAG, " (no lxc_config, and no web_ui_ip to read a VLAN from)"
 
 
-def container_id_of(script):
-    """The container a PSL record describes, or "" when it describes none.
+def container_id_of(guest):
+    """The container a source record describes, or "" when it states none.
 
     A record's own `id` identifies the record, not the guest: PSL keeps one record
     per install attempt, so the same container can be described by several records,
@@ -80,27 +73,27 @@ def container_id_of(script):
     container id is left as a guest of its own, because nothing says it shares a
     container with another record.
     """
-    return str(script.get("container_id") or "").strip()
+    return str(guest.get("container_id") or "").strip()
 
 
-def usable_web_ui_port(script):
-    """The web UI port a record states, or 0 when it states none that can route."""
+def usable_web_ui_port(guest):
+    """The guest service port a record states, or 0 when it cannot route."""
     try:
-        port = int(script.get("web_ui_port"))
+        port = int(guest.get("port"))
     except (TypeError, ValueError):
         return 0
     return port if 1 <= port <= 65535 else 0
 
 
-def has_stored_web_ui_endpoint(script):
-    """Whether a record has a saved IP and valid port to use after refresh failure."""
-    return bool(str(script.get("web_ui_ip") or "").strip()) and bool(usable_web_ui_port(script))
+def has_stored_web_ui_endpoint(guest):
+    """Whether a guest has a saved address and valid port after refresh failure."""
+    return bool(str(guest.get("address") or "").strip()) and bool(usable_web_ui_port(guest))
 
 
-def record_priority(script):
+def record_priority(guest):
     """Prefer the newest record, without interpreting PSL's install status."""
     try:
-        record_id = int(script.get("id"))
+        record_id = int(guest.get("id"))
     except (TypeError, ValueError):
         record_id = 0
     return record_id
@@ -207,12 +200,12 @@ def plan_hosts(scripts, vlan_map, public_domain, exclusions=None, aliases=None, 
     # record, so it stands alone rather than being merged by name.
     records_by_container = {}
     container_keys = set()
-    for index, script in enumerate(scripts):
-        key = container_id_of(script) or f"record {index}"
+    for index, guest in enumerate(scripts):
+        key = container_id_of(guest) or f"record {index}"
         container_keys.add(key)
         incumbent = records_by_container.get(key)
-        if incumbent is None or record_priority(script) > record_priority(incumbent):
-            records_by_container[key] = script
+        if incumbent is None or record_priority(guest) > record_priority(incumbent):
+            records_by_container[key] = guest
 
     planned = []
     skipped = []
@@ -223,9 +216,8 @@ def plan_hosts(scripts, vlan_map, public_domain, exclusions=None, aliases=None, 
     known_names = {}
     candidates_by_domain = defaultdict(list)
 
-    for script in records_by_container.values():
-        config = script.get("lxc_config") or {}
-        hostname = guest_hostname(script)
+    for guest in records_by_container.values():
+        hostname = guest_hostname(guest)
         names = []
 
         # Every container PSL still knows about counts as "present", even if it is
@@ -238,29 +230,29 @@ def plan_hosts(scripts, vlan_map, public_domain, exclusions=None, aliases=None, 
             present.update(names)
             known_names[names[0]] = names
 
-        refresh_error = script.get("_refresh_error")
-        if refresh_error and not has_stored_web_ui_endpoint(script):
+        refresh_error = guest.get("refresh_error")
+        if refresh_error and not has_stored_web_ui_endpoint(guest):
             skipped.append((
-                hostname or script.get("script_name") or container_id_of(script) or "unknown",
+                hostname or guest.get("name") or container_id_of(guest) or "unknown",
                 refresh_error,
             ))
             continue
-        if not container_id_of(script):
-            label = hostname or script.get("script_name") or "unknown"
+        if not container_id_of(guest):
+            label = hostname or guest.get("name") or "unknown"
             skipped.append((label, "PSL record has no container ID"))
             continue
 
         if hostname in exclusions:
-            skipped.append((hostname or script.get("script_name", "unknown"), "excluded proxy guest"))
+            skipped.append((hostname or guest.get("name", "unknown"), "excluded proxy guest"))
             continue
-        if script.get("is_vm"):
-            skipped.append((hostname or script.get("script_name", "unknown"), "VM VLAN config is not exposed by PVE Scripts Local"))
+        if guest.get("is_vm"):
+            skipped.append((hostname or guest.get("name", "unknown"), "VM VLAN config is not exposed by PVE Scripts Local"))
             continue
         if not HOST_LABEL_PATTERN.fullmatch(hostname):
-            skipped.append((hostname or script.get("script_name", "unknown"), "missing or invalid guest hostname"))
+            skipped.append((hostname or guest.get("name") or "unknown", "missing or invalid guest hostname"))
             continue
 
-        vlan_key, vlan_note = vlan_key_for(script, config)
+        vlan_key, vlan_note = vlan_key_for(guest)
         mapping = vlan_map.get(vlan_key)
         instance = str(mapping.get("instance") or "").strip().lower() if isinstance(mapping, dict) else ""
         if not instance:
@@ -279,14 +271,14 @@ def plan_hosts(scripts, vlan_map, public_domain, exclusions=None, aliases=None, 
         present.update(scoped_names)
         known_names[f"{hostname}.{normalized_domain}"] = names
 
-        port = usable_web_ui_port(script)
+        port = usable_web_ui_port(guest)
         if not port:
             skipped.append((hostname, "web_ui_port is missing or invalid"))
             continue
 
         candidate = {
-            "source_id": str(script.get("id", "")),
-            "container_id": container_id_of(script),
+            "source_id": str(guest.get("id", "")),
+            "container_id": container_id_of(guest),
             "guest_hostname": hostname,
             "instance": instance,
             "domain_name": f"{hostname}.{normalized_domain}",

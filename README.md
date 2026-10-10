@@ -1,6 +1,6 @@
 # HostProp
 
-HostProp propagates installed-guest changes from PVE Scripts Local to NPMPlus proxy hosts, keeping homelab services connected and accessible. Its dashboard provides previews and host management, with continuous propagation available through the watcher.
+HostProp uses PVE Scripts Local (PSL) as its guest source and propagates guest changes to configured destinations. NPMPlus is the first and currently supported destination: it manages proxy hosts so homelab services stay connected and accessible. The source and destination adapters are separated so additional destinations, including Checkmk, can be added without coupling them to PSL record formats. The dashboard provides previews and NPMPlus host management, with continuous propagation available through the watcher.
 
 ## Mapping
 

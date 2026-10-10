@@ -95,6 +95,7 @@ class DashboardAssetTests(unittest.TestCase):
         # does, or such an entry would show no badge and no tint at all.
         self.assertIn("item.status||plannerSkipStatus(item.reason)", page)
         self.assertIn("!item.instance||item.instance===entry.instance", page)
+        self.assertIn("destination:item.destination||", page)
 
     def test_host_management_displays_the_latest_plan_and_skipped_records(self):
         page = (WEB_DIR / "index.html").read_text(encoding="utf-8")
