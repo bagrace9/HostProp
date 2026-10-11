@@ -98,6 +98,42 @@ class DashboardShellTests(unittest.TestCase):
         self.assertIn("showTab(tabs[0],true)", page)
         self.assertIn("No destination is installed, so a run has nothing to write to.", page)
 
+    def test_the_strip_says_which_tabs_a_plugin_brought(self):
+        page = shell_page()
+        # The strip holds the shell's own tab beside the tabs a plugin mounted, so
+        # the legend under it names the owner of each entry. A reader can then see
+        # that most of the page is an installed plugin rather than the app itself.
+        self.assertIn('id="tab-sources"', page)
+        self.assertIn("function renderTabSources(listed)", page)
+        self.assertIn("renderTabSources(listed)", page)
+        self.assertIn('legendItem("core-tag","built in"', page)
+        self.assertIn('legendItem("plugin-tag","plugin"', page)
+        # A mounted tab carries its owner in the strip itself, so the boundary stays
+        # visible while one of a plugin's own tabs is open, and the tabs it brought
+        # are listed as chips on its card.
+        self.assertIn(".tab[data-destination]{box-shadow", page)
+        self.assertIn("tab.title=`From the ${descriptor.label||descriptor.key} destination plugin`;", page)
+        self.assertIn("descriptor.tabLabels.push(tab.textContent.trim()||tab.dataset.tab)", page)
+        self.assertIn('chips.className="plugin-chip-row"', page)
+
+    def test_a_plugins_own_section_is_captioned_with_its_plugin(self):
+        page = shell_page()
+        # A section a plugin mounted is drawn by the plugin, so the shell captions
+        # it with the plugin that brought it and the app's own panel is the only
+        # one left uncaptioned. The words come off the element, so the rule names no
+        # destination and a second plugin needs no change here.
+        self.assertIn('content:"Plugin: " attr(data-plugin-label)', page)
+        self.assertIn("node.dataset.pluginLabel=descriptor.label||descriptor.key", page)
+        self.assertIn('node.classList.add("plugin-owned")', page)
+        self.assertIn('if(chunk.dataset.host!=="tabs"){', page)
+        self.assertIn('const carrier=chunk.style.display==="contents"', page)
+        self.assertIn("markPluginSurface(surface,descriptor)", page)
+        # The shell's own panel says in words that it shipped with the app, so the
+        # contrast with a caption is explicit rather than implied.
+        self.assertIn('<span class="tag core-tag">built in</span>', page)
+        self.assertIn("<h2>Destination plugins</h2>", page)
+        self.assertIn('"No destination plugins"', page)
+
     def test_the_shell_reads_only_elements_it_owns(self):
         page = shell_page()
         # An id the shell reads but does not declare is a nameless dependency on

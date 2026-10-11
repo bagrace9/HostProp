@@ -311,19 +311,85 @@
       *,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
     }
 
-    /* The destinations card: one row per destination, each row owning its own
-       name, panel file and mounted counts. The list stands on its own, so a
-       destination added later only adds a row. */
-    .destination{border-top:1px solid var(--line);margin-top:12px;padding-top:12px}
-    .destination:first-child{border-top:0;margin-top:0;padding-top:0}
-    .destination-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
-    .destination .button{margin-top:9px}
+    /* --- Destination plugins: which part of this page came from where ------- */
+
+    /* The strip holds the shell's own tab beside the tabs a plugin mounted, so the
+       legend under it names the owner of each one: the app's own tab first, then a
+       line per plugin naming the tabs it brought. */
+    #tab-sources{margin:-12px 0 17px;padding:0}
+    .legend-owner{font-weight:650;color:var(--ink)}
+    .legend-tabs{color:var(--muted)}
+    .tag.plugin-tag{border:1px solid #cfe4d9;background:#eaf5ef;color:#236147}
+    .tag.core-tag{border:1px solid #dde5e1;background:#f1f4f2;color:#5c6c65}
+
+    /* A plugin's own sections - its tab panels and the cards it adds to the side
+       column - are captioned with the plugin that brought them, so the app's own
+       panel and an installed one are told apart. The words are read from the label
+       the shell recorded on the element, so this rule names no destination. */
+    .plugin-owned::before{
+      display:inline-block;
+      margin:0 0 11px;
+      padding:3px 10px;
+      border:1px solid #cfe4d9;
+      border-radius:999px;
+      background:#f3f9f6;
+      color:#2c6b52;
+      font-size:10px;
+      font-weight:700;
+      letter-spacing:.07em;
+      text-transform:uppercase;
+      content:"Plugin: " attr(data-plugin-label);
+    }
+
+    /* A plugin's tabs carry the same accent in the strip itself, so the boundary
+       stays visible while one of them is open. */
+    .tab[data-destination]{box-shadow:inset 0 -2px 0 #b7ddc9}
+    .tab[data-destination][aria-selected="true"]{box-shadow:0 1px 4px #1b352b14,inset 0 -2px 0 #4ca57b}
+
+    /* One row per installed plugin in the sidebar card. */
+    .plugin-mark{
+      display:grid;
+      place-items:center;
+      width:21px;
+      height:21px;
+      flex:none;
+      border:1px solid #bfdccb;
+      border-radius:7px;
+      background:linear-gradient(160deg,#eaf5ef,#d5ebde);
+      color:#22624a;
+      font-size:11px;
+      font-weight:700;
+    }
+    .destination-name{display:flex;align-items:center;gap:8px;min-width:0}
+    .destination code{
+      padding:1px 5px;
+      border:1px solid #e2eae5;
+      border-radius:5px;
+      background:#f7faf8;
+      font-family:Consolas,"Courier New",monospace;
+      font-size:11.5px;
+    }
+    .plugin-chip-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+    .plugin-chip-lead{
+      color:var(--muted);
+      font-size:10px;
+      letter-spacing:.06em;
+      text-transform:uppercase;
+    }
+    .plugin-chip{
+      padding:3px 9px;
+      border:1px solid #dbe6e0;
+      border-radius:999px;
+      background:#f7faf8;
+      color:#3e564b;
+      font-size:11px;
+    }
   </style>
 </head>
 <body>
   <header>
-    <div><h1>Proxy Host Automation</h1><p>Guests from PVE Scripts Local, carried to every destination this install serves</p></div>
-    <div class="badges"><span class="unsaved-chip" id="unsaved" hidden>Unsaved changes</span><div class="system-badge" id="destination-badge" title="Every destination this install mounts a panel for">Destinations: –</div></div>
+    <div><h1>Proxy Host Automation</h1><p>Guests from PVE Scripts Local, carried to every destination plugin this install serves</p></div>
+    <div class="badges"><span class="unsaved-chip" id="unsaved" hidden>Unsaved changes</span><div class="system-badge" id="destination-badge" title="Every destination plugin this install mounts a panel for">Destination plugins: –</div></div>
   </header>
   <div class="layout">
     <main class="main">
@@ -332,9 +398,10 @@
           <button class="tab" type="button" role="tab" id="tab-psl" data-tab="psl" aria-controls="panel-psl" aria-selected="true">PSL</button>
           <div data-plugin-host="tabs" style="display:contents"></div>
         </div>
+        <p class="legend" id="tab-sources"><span class="legend-item">Reading which destination plugins are installed…</span></p>
         <div class="note plaintext-warning" id="plaintext-warning" hidden></div>
         <div class="tab-panel" id="panel-psl" role="tabpanel" aria-labelledby="tab-psl">
-          <div class="panel-head"><div><h2>PVE Scripts Local</h2><p>The installed guests, their VLAN tags and their web UI ports are read from here.</p></div></div>
+          <div class="panel-head"><div><h2>PVE Scripts Local</h2><p>The installed guests, their VLAN tags and their web UI ports are read from here.</p></div><span class="tag core-tag">built in</span></div>
           <div class="note">The saved password is write-only in this page: leaving it blank keeps the value this machine already has, and it may instead be an environment reference such as <code>env:PVE_LOCAL_PASSWORD</code>, which is read from the dashboard's environment and never stored here.</div>
           <div class="field-grid">
             <div class="field full"><label for="pve-url">PVE Scripts Local URL</label><input id="pve-url"></div>
@@ -360,9 +427,9 @@
         <div class="actions"><button class="button secondary" id="preview-now">Preview now</button><button class="button warn" id="apply-now">Apply now</button></div>
       </section>
       <section class="panel" id="destination-card">
-        <h2>Destinations</h2>
-        <p class="status-meta">What this install writes to. Each destination brings its own panel, settings and actions; the core serves them from that destination's own package and the list below names what it found.</p>
-        <div id="destination-list"><p class="empty">Asking the dashboard which destinations are installed…</p></div>
+        <h2>Destination plugins</h2>
+        <p class="status-meta">This page is a shell plus one plugin per destination. The shell ships the PSL tab and the watcher; a destination plugin arrives as its own package and brings its own tabs, panel file, settings and actions, which the dashboard serves without reading them. Every section a plugin contributed is captioned with the plugin that brought it.</p>
+        <div id="destination-list"><p class="empty">Asking the dashboard which destination plugins are installed…</p></div>
       </section>
       <div data-plugin-host="side" style="display:contents"></div>
     </aside>
@@ -423,6 +490,40 @@
     const destinations=[];
     const registered={};
     function pluginHost(name){return document.querySelector(`[data-plugin-host="${name}"]`)}
+    // Everything a destination mounted belongs to that plugin, so the shell marks
+    // the section with the plugin's own label. The caption a reader sees is drawn
+    // by a style rule reading that attribute, so the shell never writes words a
+    // destination owns into an element it does not own.
+    function markPluginSurface(node,descriptor){
+      node.classList.add("plugin-owned");
+      node.dataset.destination=descriptor.key;
+      node.dataset.pluginLabel=descriptor.label||descriptor.key
+    }
+    // One legend entry: "built in" or "plugin", then who owns it and what they brought.
+    function legendItem(tagClass,tagText,owner,detail){
+      const item=document.createElement("span");item.className="legend-item";
+      const tag=document.createElement("span");tag.className=`tag ${tagClass}`;tag.textContent=tagText;
+      const name=document.createElement("span");name.className="legend-owner";name.textContent=owner;
+      item.append(tag,name);
+      if(detail){const note=document.createElement("span");note.className="legend-tabs";note.textContent=detail;item.append(note)}
+      return item
+    }
+    // The strip holds the shell's own tab beside the tabs a plugin mounted, so the
+    // legend under it says which is which: the app's own first, then one entry per
+    // plugin naming the tabs it brought. Nothing here knows a destination's name.
+    function renderTabSources(listed){
+      const legend=$("tab-sources");
+      if(!legend)return;
+      legend.replaceChildren();
+      legend.append(legendItem("core-tag","built in","PSL and the watcher","shipped with the app"));
+      if(!listed.length){legend.append(legendItem("plugin-tag","plugin","none installed","every tab above is the app's own"));return}
+      for(const described of listed){
+        const mounted=registered[described.key]||{};
+        const labels=mounted.tabLabels||[];
+        const detail=labels.length?labels.join(", "):described.panel?"panel not mounted":"no panel file";
+        legend.append(legendItem("plugin-tag","plugin",described.label||described.key,detail))
+      }
+    }
     function registerDestination(descriptor){
       if(!descriptor||!descriptor.key)throw new Error("A destination panel must register a key");
       registered[descriptor.key]=descriptor;
@@ -434,14 +535,25 @@
       // The shell records which destination mounted which section and which tab
       // in the shell's own tab strip, so the page can show who owns a strip entry
       // without knowing any destination's own words.
-      descriptor.tabs=[];
+      descriptor.tabs=[];descriptor.tabLabels=[];
       for(const chunk of [...template.content.children]){
         const host=pluginHost(chunk.dataset.host||"");
         if(!host){console.warn(`Destination ${descriptor.key} declares an unknown panel section: ${chunk.dataset.host}`);continue}
         chunk.dataset.destination=descriptor.key;
         for(const tab of chunk.querySelectorAll(".tab[data-tab]")){
           tab.dataset.destination=descriptor.key;
-          if(tab.getAttribute("aria-controls"))descriptor.tabs.push(tab.dataset.tab)
+          tab.title=`From the ${descriptor.label||descriptor.key} destination plugin`;
+          if(tab.getAttribute("aria-controls")){descriptor.tabs.push(tab.dataset.tab);descriptor.tabLabels.push(tab.textContent.trim()||tab.dataset.tab)}
+        }
+        // A destination's own sections are captioned with the plugin that brought
+        // them, so the app's panel and an installed one are told apart. A chunk that
+        // is only a carrier for the sections inside it - declared display:contents,
+        // or a plain div with no id or class of its own - has no box, so the caption
+        // goes on the sections it holds. The tab strip is the shell's, so those tabs
+        // keep the legend under the strip as their owner.
+        if(chunk.dataset.host!=="tabs"){
+          const carrier=chunk.style.display==="contents"||(chunk.tagName==="DIV"&&!chunk.id&&!String(chunk.className||"").trim());
+          for(const surface of (carrier?[...chunk.children]:[chunk]))markPluginSurface(surface,descriptor)
         }
         host.appendChild(chunk)
       }
@@ -449,33 +561,43 @@
       destinations.push(descriptor);
       if(descriptor.start)descriptor.start()
     }
-    // The destinations card is the shell's own view of the seam: it names what
-    // the core reported, the panel file each one brought and what that panel
-    // mounted, so a destination added later appears here with no shell change.
+    // The destinations card is the shell's own view of the seam: one row per
+    // installed plugin, naming what the core reported, the panel file it brought
+    // and the tabs and actions it mounted, so a plugin added later appears here
+    // with no shell change.
     function destinationRow(described){
       const mounted=registered[described.key]||{};
       const tabs=mounted.tabs||[];
+      const labels=mounted.tabLabels||[];
       const actions=(described.admin||[]).length;
+      const label=described.label||described.key;
       const row=document.createElement("div");row.className="destination";row.dataset.destination=described.key;
       const head=document.createElement("div");head.className="destination-head";
-      const name=document.createElement("strong");name.textContent=described.label||described.key;
+      const group=document.createElement("div");group.className="destination-name";
+      const mark=document.createElement("span");mark.className="plugin-mark";mark.setAttribute("aria-hidden","true");mark.textContent=label.slice(0,1).toUpperCase();
+      const name=document.createElement("strong");name.textContent=label;
+      const tag=document.createElement("span");tag.className="tag plugin-tag";tag.textContent="plugin";
+      group.append(mark,name,tag);
       const key=document.createElement("span");key.className="tag destination-key";key.textContent=described.key;
-      head.append(name,key);
+      head.append(group,key);
       const meta=document.createElement("p");meta.className="status-meta";
-      const panel=described.panel?`serves ${described.panel}`:"no panel file";
-      meta.textContent=`${panel} · ${tabs.length} tab${tabs.length===1?"":"s"} · ${actions} action${actions===1?"":"s"}`;
+      const file=document.createElement("code");file.textContent=described.panel||"no panel file";
+      const state=registered[described.key]?"mounted":"not mounted";
+      meta.append(file,document.createTextNode(described.panel?` · ${actions} action${actions===1?"":"s"} · ${state}`:" · served by the core"));
       row.append(head,meta);
-      if(tabs.length){const jump=document.createElement("button");jump.type="button";jump.className="button secondary";jump.textContent=`Open ${described.label||described.key}`;jump.onclick=()=>showTab(tabs[0],true);row.append(jump)}
+      if(labels.length){const chips=document.createElement("div");chips.className="plugin-chip-row";const lead=document.createElement("span");lead.className="plugin-chip-lead";lead.textContent="tabs";chips.append(lead);for(const item of labels){const chip=document.createElement("span");chip.className="plugin-chip";chip.textContent=item;chips.append(chip)}row.append(chips)}
+      if(tabs.length){const jump=document.createElement("button");jump.type="button";jump.className="button secondary";jump.textContent=`Open ${label}`;jump.onclick=()=>showTab(tabs[0],true);row.append(jump)}
       return row
     }
-    function paintDestinationBadge(count){const badge=$("destination-badge");if(badge)badge.textContent=count?`${count} destination${count===1?"":"s"}`:"No destinations"}
+    function paintDestinationBadge(count){const badge=$("destination-badge");if(badge)badge.textContent=count?`${count} destination plugin${count===1?"":"s"}`:"No destination plugins"}
     function renderDestinations(listed){
       const list=$("destination-list");
       if(!list)return;
       list.replaceChildren();
       if(!listed.length){const none=document.createElement("p");none.className="empty";none.textContent="No destination is installed, so a run has nothing to write to.";list.append(none)}
       for(const described of listed)list.append(destinationRow(described));
-      paintDestinationBadge(listed.length)
+      paintDestinationBadge(listed.length);
+      renderTabSources(listed)
     }
     function mountScript(descriptor){
       return new Promise((resolve,reject)=>{
