@@ -3,12 +3,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from reverse_proxy_automation.plugins.npmplus.config import instance_label, merge_instances
 from reverse_proxy_automation.service import (
     ConfigStore,
     check_secret_references,
-    instance_label,
-    merge_instances,
     normalize_config,
+    plaintext_secret_fields,
     public_config,
     resolve_secret,
     secret_env_name,
@@ -251,6 +251,10 @@ class PublicConfigTests(unittest.TestCase):
         public = public_config(config)
         self.assertTrue(public["pve_local_password_configured"])
         self.assertNotIn("pve_local_password", public)
+        self.assertEqual(
+            public["plaintext_secrets"],
+            ["PVE Scripts Local password", "NPMPlus instance 'lab' secret"],
+        )
         self.assertEqual(public["instances"]["lab"], {
             "label": "",
             "url": "https://internal.example.net:81",
@@ -260,6 +264,36 @@ class PublicConfigTests(unittest.TestCase):
             "verify_tls": True,
         })
         self.assertNotIn("secret", public["instances"]["lab"])
+
+
+class PlaintextSecretTests(unittest.TestCase):
+    """A literal credential in the settings file is named, never valued."""
+
+    def test_literal_secrets_are_listed_and_reference_free(self):
+        config = normalize_config({
+            "pve_local_password": "psl-password",
+            "instances": {
+                "lab": {"url": "https://internal.example.net:81", "secret": "api-secret"},
+            },
+        })
+        self.assertEqual(
+            plaintext_secret_fields(config),
+            ["PVE Scripts Local password", "NPMPlus instance 'lab' secret"],
+        )
+        # Only the descriptions travel; the values never reach the page.
+        self.assertNotIn("psl-password", json.dumps(public_config(config)))
+        self.assertNotIn("api-secret", json.dumps(public_config(config)))
+
+    def test_env_references_and_blank_fields_are_not_plaintext(self):
+        config = normalize_config({
+            "pve_local_password": "env:PVE_LOCAL_PASSWORD",
+            "instances": {
+                "lab": {"url": "https://a.example.net:81", "secret": "env:NPM_LAB_SECRET"},
+                "dmz": {"url": "https://b.example.net:81"},
+            },
+        })
+        self.assertEqual(plaintext_secret_fields(config), [])
+        self.assertEqual(public_config(config)["plaintext_secrets"], [])
 
 
 class SecretReferenceTests(unittest.TestCase):

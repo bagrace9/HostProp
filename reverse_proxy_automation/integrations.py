@@ -2,8 +2,6 @@
 
 from typing import Protocol
 
-from .planner import parse_exclusions, plan_hosts
-
 
 class SourceAdapter(Protocol):
     def read(self, config, refresh_lxc_config=False, progress_callback=None):
@@ -57,64 +55,3 @@ def normalize_psl_record(record):
         "is_vm": bool(record.get("is_vm")),
         "refresh_error": str(record.get("_refresh_error") or ""),
     }
-
-
-class NpmPlusDestinationAdapter:
-    """Plan and reconcile proxy hosts while keeping NPMPlus details destination-local."""
-
-    key = "npmplus"
-    label = "NPMPlus"
-
-    def __init__(self, client_factory, reconcile_func):
-        self.client_factory = client_factory
-        self.reconcile = reconcile_func
-
-    def plan(self, guests, config):
-        result = plan_hosts(
-            guests,
-            config["vlan_map"],
-            config["public_domain"],
-            parse_exclusions(config["excluded_guest_hostnames"]),
-            config.get("aliases"),
-            instance_aliases=config.get("entry_aliases"),
-        )
-        for host in result["plan"]:
-            override = (config.get("entry_port_overrides") or {}).get(
-                f"{host['instance']}:{host['guest_hostname']}"
-            )
-            if override is not None:
-                host["forward_port"] = int(override)
-        return result
-
-    def apply(self, plan, config, state, apply_changes=False):
-        allow_delete = bool(config.get("delete_removed_hosts", False))
-        planned_instances = {host["instance"] for host in plan["plan"]}
-        needed = set(planned_instances)
-        instances = config.get("instances") or {}
-        if allow_delete:
-            # An instance may need visiting only to delete hosts for removed guests.
-            needed |= {
-                key.partition(":")[0] for key in state["managed"]
-            } & set(instances)
-
-        clients = {}
-        for instance in sorted(needed):
-            entry = instances.get(instance) or {}
-            if not entry.get("url"):
-                if instance in planned_instances:
-                    raise ValueError(
-                        f"Set the URL for NPMPlus instance '{instance}' before syncing"
-                    )
-                continue
-            clients[instance] = self.client_factory(instance, entry)
-
-        return self.reconcile(
-            plan["plan"],
-            clients,
-            state,
-            apply_changes=apply_changes,
-            present_domains=plan["present"],
-            allow_delete=allow_delete,
-            max_deletes=config["max_deletes_per_run"] or 0,
-            planned_names=plan["names_by_domain"],
-        )

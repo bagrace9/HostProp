@@ -1,9 +1,17 @@
-import json
-import os
-from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
+"""Reconciling a plan against the proxy hosts an NPMPlus instance already holds.
 
-from .clients import ApiError, select_shared_certificate
+This module was the core's sync.py. It is NPMPlus's own logic - it speaks about
+proxy hosts, certificates and NPMPlus ownership keys - so it lives with the
+destination that uses it. ``state`` here is the plugin's slice of the state
+file, not the whole file; see ``state.py``.
+"""
+
+from concurrent.futures import ThreadPoolExecutor
+
+from ...clients import ApiError
+from .client import select_shared_certificate
+from .state import adopted_host_ids
+
 
 CHANGED_OK = {"OK", "CREATE", "UPDATE", "DRY-CREATE", "DRY-UPDATE"}
 
@@ -32,89 +40,6 @@ PRESERVED_FIELDS = (
     "npmplus_dns_provider_credentials",
     "npmplus_propagation_seconds",
 )
-
-
-def load_state(path):
-    state_path = Path(path)
-    if not state_path.exists():
-        return {"managed": {}, "adopted": {}}
-    with state_path.open("r", encoding="utf-8") as state_file:
-        state = json.load(state_file)
-    if not isinstance(state, dict) or not isinstance(state.get("managed"), dict):
-        raise ValueError(f"Invalid sync state file: {state_path}")
-    # A host the user adopted was not created here, so it has no ownership key of
-    # its own: it is recorded by instance and NPMPlus host ID instead.
-    adopted = state.get("adopted")
-    if adopted is None:
-        adopted = {}
-    elif not isinstance(adopted, dict):
-        raise ValueError(f"Invalid sync state file: {state_path}")
-    state["adopted"] = {str(key): True for key in adopted}
-    return state
-
-
-def save_state(path, state):
-    state_path = Path(path)
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_path = state_path.with_suffix(state_path.suffix + ".tmp")
-    with temporary_path.open("w", encoding="utf-8") as state_file:
-        json.dump(state, state_file, indent=2, sort_keys=True)
-        state_file.write("\n")
-    os.replace(temporary_path, state_path)
-
-
-def adopted_host_ids(state, instance):
-    """NPMPlus host IDs on one instance that the user handed to the automation.
-
-    An adopted host is updated like a host this app created, but it is never
-    deleted by itself: the user asked for that entry to be kept, so only an
-    explicit delete in Host management removes it.
-    """
-    return {
-        key.partition(":")[2]
-        for key in (state.get("adopted") or {})
-        if key.partition(":")[0] == instance
-    }
-
-
-def ownership_of(state, instance, host_id):
-    """How this app treats one host: 'managed', 'adopted' or 'unmanaged'."""
-    host_id = str(host_id)
-    for key, recorded in (state.get("managed") or {}).items():
-        if key.partition(":")[0] == instance and str(recorded) == host_id:
-            return "managed"
-    if host_id in adopted_host_ids(state, instance):
-        return "adopted"
-    return "unmanaged"
-
-
-def adopt_host(state, instance, host_id):
-    """Hand an existing NPMPlus host to the automation, so a plan may update it."""
-    state.setdefault("adopted", {})[f"{instance}:{host_id}"] = True
-
-
-def forget_host(state, instance, host_id):
-    """Drop every record kept for one host; releasing and deleting share this edit.
-
-    Returns the number of state entries that were removed.
-    """
-    host_id = str(host_id)
-    managed = state.get("managed") or {}
-    adopted = state.get("adopted") or {}
-    removed = 0
-    for key in [
-        key for key, recorded in managed.items()
-        if key.partition(":")[0] == instance and str(recorded) == host_id
-    ]:
-        managed.pop(key, None)
-        removed += 1
-    for key in [
-        key for key in adopted
-        if key.partition(":")[0] == instance and key.partition(":")[2] == host_id
-    ]:
-        adopted.pop(key, None)
-        removed += 1
-    return removed
 
 
 def proxy_host_payload(host, certificate_id):

@@ -18,16 +18,36 @@ if __package__ in (None, ""):
     # the path and give this module its real package name, so the relative import below
     # resolves to the package's modules instead of dying with "attempted relative import
     # with no known parent package". The package is then imported normally, so clients.py,
-    # planner.py, service.py and sync.py are never loaded twice (once as loose top-level
-    # modules, once as package members).
+    # planner.py and service.py are never loaded twice (once as loose top-level modules,
+    # once as package members).
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     __package__ = "reverse_proxy_automation"
 
-from .service import ConfigStore, SyncService, public_config, unresolved_secret_references
+from .service import (
+    ConfigStore,
+    SyncService,
+    plaintext_secret_fields,
+    public_config,
+    unresolved_secret_references,
+)
 
 
 WEB_DIR = Path(__file__).parent / "web"
 DEFAULT_ALLOWED_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+# A destination's panel lives in its own package, and this server hands the file
+# over without reading it. Only these asset shapes are served, and only from
+# inside the plugin's own ``web`` directory.
+PLUGIN_ASSET_TYPES = {
+    ".js": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".html": "text/html; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".ico": "image/x-icon",
+}
+PLUGIN_ASSET_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 def _normalized_host(host_value):
@@ -59,6 +79,20 @@ def _normalized_host(host_value):
         if not re.fullmatch(r"[a-z0-9.-]+", hostname):
             return None
         return hostname
+
+
+def plugin_web_directory(plugin):
+    """The directory a destination keeps its own panel assets in, or None.
+
+    A destination ships its panel inside its package, so the core learns where
+    that is from the plugin object rather than from a table of its own.
+    """
+    module = sys.modules.get(type(plugin).__module__)
+    module_file = getattr(module, "__file__", None)
+    if not module_file:
+        return None
+    directory = Path(module_file).parent / "web"
+    return directory if directory.is_dir() else None
 
 
 class DashboardServer(ThreadingHTTPServer):
@@ -164,6 +198,32 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send(200, body, "text/html; charset=utf-8")
 
+    def _serve_plugin_asset(self, request_path):
+        """Hand over one destination's panel file without interpreting it.
+
+        ``request_path`` is ``<key>/<asset>``. The file has to sit directly in
+        the destination's own ``web`` directory, so a panel cannot walk out of
+        its package even if its own name is unfriendly.
+        """
+        key, _, asset = request_path.partition("/")
+        registry = self.server.sync_service.registry
+        plugin = registry.get(key)
+        if plugin is None or not PLUGIN_ASSET_NAME.fullmatch(asset or ""):
+            self._json(404, {"error": "Not found"})
+            return
+        directory = plugin_web_directory(plugin)
+        target = (directory / asset) if directory is not None else None
+        if target is None or target.name != asset or not target.is_file():
+            self._json(404, {"error": f"Panel asset is missing: {key}/{asset}"})
+            return
+        try:
+            body = target.read_bytes()
+        except OSError as error:
+            self._json(500, {"error": f"Panel asset could not be read: {error}"})
+            return
+        content_type = PLUGIN_ASSET_TYPES.get(target.suffix.lower(), "text/plain; charset=utf-8")
+        self._send(200, body, content_type)
+
     def do_GET(self):
         if not self._trusted_host():
             self._json(421, {"error": "Untrusted Host header"})
@@ -184,8 +244,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, public_config(self.server.config_store.load()))
             elif path == "/api/status":
                 self._json(200, self.server.sync_service.get_status())
-            elif path == "/api/entries":
-                self._json(200, {"ok": True, **self.server.sync_service.list_entries()})
+            elif path == "/api/destinations":
+                self._json(200, {
+                    "ok": True,
+                    "destinations": self.server.sync_service.destinations(),
+                })
+            elif path.startswith("/plugins/"):
+                # A destination's own panel file, served without being read: the
+                # core never learns what is inside it.
+                self._serve_plugin_asset(path[len("/plugins/"):])
             else:
                 self._json(404, {"error": "Not found"})
         except (ValueError, OSError, json.JSONDecodeError) as error:
@@ -230,33 +297,14 @@ class Handler(BaseHTTPRequestHandler):
                 config = self.server.config_store.save(self._body())
                 self.server.sync_service.wake_loop()
                 self._json(200, {"ok": True, "config": public_config(config)})
-            elif path == "/api/entries/ownership":
+            elif path.startswith("/api/destinations/"):
+                # One destination's own action. The core forwards the name and the
+                # payload without reading either, so nothing here knows that
+                # NPMPlus calls a host an "entry" or names an instance at all.
+                key = path[len("/api/destinations/"):].strip("/")
                 body = self._body()
-                self._json(200, self.server.sync_service.set_ownership(
-                    str(body.get("instance", "")),
-                    str(body.get("host_id", "")),
-                    str(body.get("action", "")),
-                ))
-            elif path == "/api/entries/aliases":
-                body = self._body()
-                self._json(200, self.server.sync_service.set_entry_aliases(
-                    str(body.get("instance", "")),
-                    str(body.get("host_id", "")),
-                    body.get("aliases", []),
-                ))
-            elif path == "/api/entries/port":
-                body = self._body()
-                self._json(200, self.server.sync_service.set_entry_port(
-                    str(body.get("instance", "")),
-                    str(body.get("host_id", "")),
-                    body.get("port"),
-                ))
-            elif path == "/api/entries/delete":
-                body = self._body()
-                self._json(200, self.server.sync_service.delete_entry(
-                    str(body.get("instance", "")),
-                    str(body.get("host_id", "")),
-                ))
+                action = str(body.pop("action", "") or "")
+                self._json(200, self.server.sync_service.invoke(key, action, body))
             else:
                 self._json(404, {"error": "Not found"})
         except (ValueError, OSError, json.JSONDecodeError) as error:
@@ -307,6 +355,13 @@ def main(argv=None):
     else:
         for description, name in unresolved_secret_references(saved_config):
             print(f"Warning: {description} reads {name} from the environment, which is not set.")
+        # A literal credential is a deliberate choice, not a failure, but it must
+        # not be a silent one: say where it lives and how to move it out of the file.
+        for description in plaintext_secret_fields(saved_config):
+            print(
+                f"Warning: {description} is stored in {args.config} in the clear. "
+                "Use an env: reference to keep it out of the file."
+            )
     sync_service = SyncService(config_store, args.state)
     server = DashboardServer(
         (args.host, args.port),

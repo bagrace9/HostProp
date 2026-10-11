@@ -1,11 +1,11 @@
 import unittest
 
-from reverse_proxy_automation.sync import (
+from reverse_proxy_automation.plugins.npmplus.reconcile import reconcile
+from reverse_proxy_automation.plugins.npmplus.state import (
     adopt_host,
     adopted_host_ids,
     forget_host,
     ownership_of,
-    reconcile,
 )
 
 

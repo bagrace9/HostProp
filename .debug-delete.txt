@@ -1,0 +1,20 @@
+﻿BEFORE: {"managed": {"lab:media-service.example.net": "21"}, "adopted": {}}
+RESULT: {'ok': True, 'message': 'Deleted media-service.example.net, photos.example.net from lab NPMPlus.'}
+AFTER: {
+  "destinations": {
+    "npmplus": {
+      "adopted": {},
+      "managed": {}
+    }
+  }
+}
+
+FINAL: {
+  "destinations": {
+    "npmplus": {
+      "adopted": {},
+      "managed": {}
+    }
+  }
+}
+

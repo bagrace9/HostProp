@@ -11,11 +11,14 @@ from urllib.request import HTTPSHandler, Request
 from reverse_proxy_automation.clients import (
     ApiError,
     JsonClient,
-    NpmPlusClient,
     PveScriptsLocalClient,
     SameOriginRedirectHandler,
     unverified_tls_context,
 )
+
+# The NPMPlus API client moved into the destination package that owns it. It is
+# still covered here, where the fake HTTP opener these tests share lives.
+from reverse_proxy_automation.plugins.npmplus.client import NpmPlusClient
 
 
 class BrokenOpener:

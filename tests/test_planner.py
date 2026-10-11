@@ -1,6 +1,6 @@
 import unittest
 
-from reverse_proxy_automation.clients import select_certificate, select_shared_certificate
+from reverse_proxy_automation.plugins.npmplus.client import select_certificate, select_shared_certificate
 from reverse_proxy_automation.integrations import normalize_psl_record
 from reverse_proxy_automation.planner import (
     parse_aliases,

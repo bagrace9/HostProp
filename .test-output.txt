@@ -1,0 +1,25 @@
+﻿.\.venv\Scripts\python.exe : .............................................................................................................
+.......................................................................................usage: python.exe -m unittest [-h] [--host HOST] 
+[--port PORT]
+At line:1 char:65
++ ... utomation'; .\.venv\Scripts\python.exe -m unittest discover -s tests  ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (..................] [--port PORT]:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+                              [--config CONFIG] [--state STATE]
+python.exe -m unittest: error: Invalid LOG_LEVEL 'bogus'; choose DEBUG, INFO, WARNING, ERROR, or CRITICAL
+...........
+----------------------------------------------------------------------
+Ran 207 tests in 7.521s
+
+OK
+Dashboard listening at http://127.0.0.1:8088/
+Stopping dashboard.
+Dashboard listening at http://127.0.0.1:8088/
+Stopping dashboard.
+[10/Oct/2026 20:11:34] "GET /api/status HTTP/1.1" 200 -
+[10/Oct/2026 20:11:34] "GET /api/status HTTP/1.1" 200 -
+[10/Oct/2026 20:11:35] "GET /api/status HTTP/1.1" 200 -
+[10/Oct/2026 20:11:35] "GET /api/status HTTP/1.1" 421 -
+[10/Oct/2026 20:11:36] "POST /api/config HTTP/1.1" 400 -

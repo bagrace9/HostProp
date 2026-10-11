@@ -1,10 +1,11 @@
 import unittest
+from unittest import mock
 
 from reverse_proxy_automation.integrations import (
-    NpmPlusDestinationAdapter,
     PslSourceAdapter,
     normalize_psl_record,
 )
+from reverse_proxy_automation.plugins.npmplus.adapter import NpmPlusDestination
 
 
 class FakePslClient:
@@ -88,15 +89,44 @@ class DestinationAdapterTests(unittest.TestCase):
             reconcile_calls.append((args, kwargs))
             return [("CREATE", "lab", "photos.example.net", "created")]
 
-        adapter = NpmPlusDestinationAdapter(create_client, reconcile)
-        plan = adapter.plan([guest], config)
-        state = {"managed": {}}
-
-        rows = adapter.apply(plan, config, state, apply_changes=True)
+        adapter = NpmPlusDestination()
+        with mock.patch.object(NpmPlusDestination, "client_factory", staticmethod(create_client)), \
+                mock.patch("reverse_proxy_automation.plugins.npmplus.adapter.reconcile", reconcile):
+            plan = adapter.plan([guest], config)
+            state = {"managed": {}}
+            rows = adapter.apply(plan, config, state, apply_changes=True)
 
         self.assertEqual(adapter.key, "npmplus")
         self.assertEqual(plan["plan"][0]["forward_port"], 9090)
+        # The adapter builds the client itself from the saved instance entry...
         self.assertEqual(client_calls, [("lab", config["instances"]["lab"])])
         self.assertEqual(rows[0][0], "CREATE")
+        # ...then hands the reconciler those clients, its own slice of the state
+        # file, and the names the plan knows for each domain.
         self.assertEqual(reconcile_calls[0][0][1], {"lab": "npm-client"})
+        self.assertEqual(reconcile_calls[0][0][2], state)
+        self.assertEqual(reconcile_calls[0][1]["planned_names"], plan["names_by_domain"])
         self.assertTrue(reconcile_calls[0][1]["apply_changes"])
+
+    def test_apply_refuses_a_planned_instance_with_no_url(self):
+        guest = normalize_psl_record({
+            "id": 1,
+            "script_name": "photos",
+            "container_id": 101,
+            "lxc_config": {"hostname": "photos", "net_vlan": 10},
+            "web_ui_port": 8080,
+        })
+        config = {
+            "vlan_map": {"10": {"instance": "lab", "zone": "internal.example.net"}},
+            "public_domain": "example.net",
+            "excluded_guest_hostnames": "",
+            "instances": {},
+            "entry_port_overrides": {},
+            "delete_removed_hosts": False,
+            "max_deletes_per_run": None,
+        }
+        adapter = NpmPlusDestination()
+        plan = adapter.plan([guest], config)
+
+        with self.assertRaisesRegex(ValueError, "Set the URL for NPMPlus instance 'lab' before syncing"):
+            adapter.apply(plan, config, {"managed": {}}, apply_changes=True)

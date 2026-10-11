@@ -1,273 +1,153 @@
+"""Settings, state and the run, wired to destination plugins.
+
+The core owns the source (PVE Scripts Local), the settings file, the state file,
+the run lock and the watcher loop. Everything a destination knows about itself -
+its settings keys, its secrets, its records, its panel actions - lives in its own
+package and is reached through the plugin registry, so adding a destination edits
+nothing here.
+"""
+
 import json
 import logging
 import os
 import re
 import threading
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from time import perf_counter
 
-from .clients import ApiError, NpmPlusClient, PveScriptsLocalClient
-from .integrations import NpmPlusDestinationAdapter, PslSourceAdapter
-from .planner import DOMAIN_PATTERN, HOST_LABEL_PATTERN, parse_aliases
-from .sync import adopted_host_ids, adopt_host, forget_host, load_state, reconcile, save_state
+from .clients import PveScriptsLocalClient
+from .integrations import PslSourceAdapter
+from .plugins.base import UnknownTarget
+from .plugins.registry import default_registry
+from .settings import (
+    as_bool as _as_bool,
+    check_reference_name as _check_reference_name,
+    check_secret_references as _check_secret_fields,
+    plaintext_secret_fields as _plaintext_secret_fields,
+    resolve_secret,
+    secret_env_name,
+    unresolved_secret_references as _unresolved_secret_fields,
+)
+from .statefile import load_state, save_state
 
 
 LOGGER = logging.getLogger(__name__)
 
+# The settings the core itself owns: the source it reads and the switches that
+# govern when and whether a run happens. A destination's keys are not listed here
+# at all - they are round-tripped through the plugin registry - so this dict is
+# the whole of the core's settings vocabulary.
 DEFAULT_CONFIG = {
     "pve_local_url": "",
     "pve_local_username": "",
     "pve_local_password": "",
     # A LAN endpoint usually serves a self-signed certificate, so the TLS check can
     # be relaxed per endpoint: this switch for PVE Scripts Local, and each
-    # instance's own "verify_tls". Both default to verifying.
+    # destination's own switch. Both default to verifying.
     "pve_local_verify_tls": True,
-    "public_domain": "",
-    # Any number of NPMPlus instances, keyed by a slug that VLAN mappings refer to.
-    "instances": {},
-    "vlan_map": {},
-    "entry_aliases": {},
-    "entry_port_overrides": {},
-    "excluded_guest_hostnames": "",
-    # Extra names a guest's proxy host answers to, one guest per line as
-    # "guest = name, name"; a bare name is a label under the public domain.
-    "aliases": "",
     "poll_interval_seconds": None,
     "watch_enabled": False,
     "auto_apply": False,
-    "delete_removed_hosts": False,
-    "max_deletes_per_run": None,
 }
 
-
-# An instance name prefixes every "<instance>:<domain>" ownership key in the state
-# file, so keep it a slug: no colons and no whitespace.
-INSTANCE_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
-INSTANCE_FIELDS = ("label", "url", "identity", "secret")
-# Settings files written before instances were user-defined used these flat keys.
-LEGACY_INSTANCE_KEYS = {
-    "lab": ("npm_lab", "Lab NPMPlus"),
-    "public": ("npm_public", "Public NPMPlus"),
-}
-# A secret field holds either the literal password or a reference such as
-# "env:NPM_LAB_SECRET". The reference is read from the environment the dashboard
-# was started from when a client is built, so the settings file can stay
-# secret-free while the value never has to pass through the browser.
-SECRET_ENV_PREFIX = "env:"
-ENV_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# The one env reference the core's own secret field accepts. Each destination
+# names the variables its own secrets accept.
 PSL_SECRET_ENV_PATTERN = re.compile(r"^PVE_LOCAL_PASSWORD$")
+# Where a reader is sent when the reference does not name that one variable.
+PSL_SECRET_HINT = " (use env:PVE_LOCAL_PASSWORD)"
+
+# The registry the core asks when its caller has none to hand. It is built once per
+# process, so every destination is imported one time however often it is used.
+_REGISTRY = None
 
 
-def npm_secret_env_pattern(instance):
-    """Environment variable allowed for one named NPMPlus instance."""
-    suffix = re.sub(r"[^A-Za-z0-9_]", "_", str(instance)).upper()
-    return re.compile(rf"^NPM_{re.escape(suffix)}_SECRET$")
+def plugin_registry():
+    """The destinations the app ships with, plus the ones installed beside it."""
+    global _REGISTRY
+    if _REGISTRY is None:
+        _REGISTRY = default_registry()
+    return _REGISTRY
 
 
-def secret_env_name(value):
-    """Environment variable a secret field references, or None for a literal value."""
-    text = str(value or "")
-    if text[: len(SECRET_ENV_PREFIX)].lower() != SECRET_ENV_PREFIX:
-        return None
-    return text[len(SECRET_ENV_PREFIX) :].strip()
+def secret_fields(config, registry=None):
+    """(description, value) for the source's password and every destination's secrets.
 
-
-def resolve_secret(value, environ=None):
-    """The literal secret, or the value of the variable an "env:" reference names.
-
-    A reference to an unset variable resolves to "", so callers can report the
-    missing variable instead of sending an empty password to an API.
+    The descriptions are the core's own field plus whatever each destination names,
+    so a log line or a settings page can point at the field that needs setting
+    without the core knowing which destination owns it.
     """
-    name = secret_env_name(value)
-    if name is None:
-        return str(value or "")
-    return str((os.environ if environ is None else environ).get(name, ""))
-
-
-def _secret_fields(config):
-    """(description, secret field) for the PSL password and every instance."""
     yield "PVE Scripts Local password", config.get("pve_local_password")
-    for instance, entry in (config.get("instances") or {}).items():
-        entry = entry if isinstance(entry, dict) else {}
-        yield f"NPMPlus instance '{instance}' secret", entry.get("secret")
+    yield from (registry or plugin_registry()).secret_fields(config)
 
 
-def unresolved_secret_references(config, environ=None):
+def unresolved_secret_references(config, environ=None, registry=None):
     """Every (description, variable name) whose "env:" reference is not set."""
-    unresolved = []
-    for description, value in _secret_fields(config):
-        name = secret_env_name(value)
-        if name and not resolve_secret(value, environ):
-            unresolved.append((description, name))
-    return unresolved
+    return _unresolved_secret_fields(secret_fields(config, registry), environ)
 
 
-def check_secret_references(config, environ=None):
+def plaintext_secret_fields(config, registry=None):
+    """Descriptions of every secret the settings file stores as a literal password.
+
+    A field holding an "env:" reference is not listed, because the reference is
+    not itself a secret. Only the human-readable description is returned, so the
+    result is safe to print at startup and to send to the browser.
+    """
+    return _plaintext_secret_fields(secret_fields(config, registry))
+
+
+def check_secret_references(config, environ=None, registry=None):
     """Raise ValueError naming every "env:" reference that resolves to nothing.
 
     Without this check an unset variable would look like "no password
     configured" and a run would quietly talk to the API unauthenticated.
     """
-    missing = unresolved_secret_references(config, environ)
-    if not missing:
-        return
-    details = "; ".join(
-        f"{description} references {name}, which is not set" for description, name in missing
-    )
-    raise ValueError(f"{details}. Set it in the environment the dashboard was started from")
+    return _check_secret_fields(secret_fields(config, registry), environ)
 
 
-def _check_reference_name(description, value, allowed_pattern=None):
-    """Reject env references that do not follow the field's supported naming rule."""
-    name = secret_env_name(value)
-    if name is None:
-        return
-    if not ENV_NAME_PATTERN.fullmatch(name):
-        raise ValueError(
-            f"{description} references '{name}', which is not a valid environment variable name"
-        )
-    if allowed_pattern is not None and not allowed_pattern.fullmatch(name):
-        raise ValueError(
-            f"{description} must reference the variable assigned to this secret field "
-            "(PVE_LOCAL_PASSWORD for PSL or NPM_<INSTANCE>_SECRET for NPMPlus)"
-        )
+def normalize_config(loaded, registry=None):
+    """Merge a stored settings file with the defaults every destination declares.
 
-
-def _as_bool(value, default):
-    """Coerce a stored or submitted switch to a bool, falling back to the default.
-
-    A hand-edited settings file may hold "false" or 0 rather than a JSON bool, so
-    the recognisable spellings are accepted; anything unrecognised keeps the
-    default instead of failing the whole file.
+    Only the core's own keys are listed here. Each destination reads its own keys
+    out of the raw file, which is what lets an older file - one that spells a
+    destination's settings the way an earlier release did - keep working without
+    the core knowing what those keys were.
     """
-    if isinstance(value, bool):
-        return value
-    if value is None:
-        return default
-    if isinstance(value, (int, float)):
-        return bool(value)
-    text = str(value).strip().lower()
-    if text in {"1", "true", "yes", "on"}:
-        return True
-    if text in {"0", "false", "no", "off"}:
-        return False
-    return default
-
-
-def instance_label(name, entry):
-    """Display name for an instance, falling back to "<name> NPMPlus"."""
-    label = str((entry or {}).get("label") or "").strip()
-    return label or f"{name} NPMPlus"
-
-
-def _clean_instance(entry):
-    entry = entry if isinstance(entry, dict) else {}
-    return {
-        "label": str(entry.get("label") or "").strip(),
-        "url": str(entry.get("url") or "").strip(),
-        "identity": str(entry.get("identity") or "").strip(),
-        # A secret may legitimately contain spaces, so it is never stripped.
-        "secret": str(entry.get("secret") or ""),
-        # Coerced here, so a hand-edited "false" still relaxes verification and the
-        # browser always receives a real bool.
-        "verify_tls": _as_bool(entry.get("verify_tls"), True),
-    }
-
-
-def _instances_from_config(loaded):
-    """Configured instances, folding in legacy npm_lab_*/npm_public_* keys."""
-    instances = {}
-    raw = loaded.get("instances")
-    if isinstance(raw, dict):
-        for name, entry in raw.items():
-            key = str(name).strip().lower()
-            if key:
-                instances[key] = _clean_instance(entry)
-    for name, (prefix, label) in LEGACY_INSTANCE_KEYS.items():
-        if name in instances:
-            continue
-        legacy = {field: loaded.get(f"{prefix}_{field}") for field in ("url", "identity", "secret")}
-        if any(str(value or "").strip() for value in legacy.values()):
-            instances[name] = _clean_instance({**legacy, "label": label})
-    return instances
-
-
-def _vlan_map_from_config(raw):
-    """Copy a VLAN map, normalising the tag/instance/zone spelling."""
-    if not isinstance(raw, dict):
-        return raw  # let validate_config reject it
-    vlan_map = {}
-    for tag, mapping in raw.items():
-        if not isinstance(mapping, dict):
-            vlan_map[str(tag).strip().lower()] = mapping
-            continue
-        vlan_map[str(tag).strip().lower()] = {
-            "instance": str(mapping.get("instance") or "").strip().lower(),
-            "zone": str(mapping.get("zone") or "").strip().lower().rstrip("."),
-        }
-    return vlan_map
-
-
-def normalize_config(loaded):
-    """Merge a stored config with the defaults and migrate legacy instance keys."""
     loaded = loaded if isinstance(loaded, dict) else {}
-    config = {
-        key: loaded.get(key, default)
-        for key, default in DEFAULT_CONFIG.items()
-        if not isinstance(default, dict)
-    }
-    config["instances"] = _instances_from_config(loaded)
-    config["vlan_map"] = _vlan_map_from_config(loaded.get("vlan_map", {}))
-    config["entry_aliases"] = loaded.get("entry_aliases", {})
-    config["entry_port_overrides"] = loaded.get("entry_port_overrides", {})
-    # Sent to the browser and used to build the PSL client, so keep it a real bool.
+    config = {key: loaded.get(key, default) for key, default in DEFAULT_CONFIG.items()}
+    config.update((registry or plugin_registry()).clean_config(loaded))
+    # Sent to the browser and used to build the source client, so keep it a real bool.
     config["pve_local_verify_tls"] = _as_bool(config.get("pve_local_verify_tls"), True)
-    for key in ("watch_enabled", "auto_apply", "delete_removed_hosts"):
+    for key in ("watch_enabled", "auto_apply"):
         config[key] = _as_bool(config.get(key), False)
     return config
 
 
-def merge_instances(existing, submitted):
-    """Validate submitted instances, keeping stored secrets when a field is blank."""
-    if not isinstance(submitted, dict):
-        raise ValueError("Instances must be a JSON object keyed by instance name")
-    merged = {}
-    for name, entry in submitted.items():
-        key = str(name).strip().lower()
-        if not key:
-            continue
-        if not isinstance(entry, dict):
-            raise ValueError(f"NPMPlus instance '{key}' must be a JSON object")
-        stored = existing.get(key) if isinstance(existing.get(key), dict) else {}
-        instance = _clean_instance({**stored, **entry})
-        if not instance["secret"]:
-            instance["secret"] = str(stored.get("secret") or "")
-        merged[key] = instance
-    return merged
-
-
 class ConfigStore:
-    def __init__(self, path):
+    """The settings file, shared by the core and every destination."""
+
+    def __init__(self, path, registry=None):
         self.path = Path(path)
         self.lock = threading.RLock()
+        # The destinations whose keys this file round-trips. Each one reads and
+        # writes only its own keys, so the store never has to name any of them.
+        self.registry = registry or plugin_registry()
 
     def load(self):
         with self.lock:
             if not self.path.exists():
-                return normalize_config({})
+                return normalize_config({}, self.registry)
             with self.path.open("r", encoding="utf-8") as config_file:
                 loaded = json.load(config_file)
-            return normalize_config(loaded)
+            return normalize_config(loaded, self.registry)
 
     def save(self, submitted):
         with self.lock:
             old = self.load()
             config = {**old}
             for key in DEFAULT_CONFIG:
-                if key in {"instances", "vlan_map"} or key not in submitted:
+                if key not in submitted:
                     continue
                 value = submitted[key]
                 if key.endswith("_password") or key.endswith("_secret"):
@@ -275,12 +155,17 @@ class ConfigStore:
                         config[key] = value
                 else:
                     config[key] = value
-            if "instances" in submitted:
-                config["instances"] = merge_instances(old["instances"], submitted["instances"])
-            if "vlan_map" in submitted:
-                config["vlan_map"] = _vlan_map_from_config(submitted["vlan_map"])
-            validate_config(config, allow_incomplete=True)
-            self.path.parent.mkdir(parents=True, exist_ok=True)
+            # Each destination merges the fragment of its own keys that was submitted,
+            # so one page's form cannot disturb another destination's settings - or
+            # the core's.
+            config.update(self.registry.merge_config(old, submitted))
+            validate_config(config, allow_incomplete=True, registry=self.registry)
+            parent = self.path.parent
+            if not parent.exists():
+                parent.mkdir(parents=True, exist_ok=True)
+                # The settings file can hold literal credentials, so keep the
+                # directory that stores it readable only by its owner.
+                os.chmod(parent, 0o700)
             temporary = self.path.with_suffix(self.path.suffix + ".tmp")
             # Create the file with 0600 from the start so secrets are never
             # readable under a permissive umask.
@@ -293,84 +178,28 @@ class ConfigStore:
             return config
 
 
-def validate_config(config, allow_incomplete=False):
-    instances = config.get("instances")
-    if not isinstance(instances, dict):
-        raise ValueError("Instances must be a JSON object keyed by NPMPlus instance name")
-    for name, entry in instances.items():
-        if not INSTANCE_NAME_PATTERN.fullmatch(str(name)):
-            raise ValueError(f"Instance name '{name}' must use 1-32 characters of a-z, 0-9, '-' or '_'")
-        if not isinstance(entry, dict):
-            raise ValueError(f"NPMPlus instance '{name}' must be a JSON object")
-        for field in INSTANCE_FIELDS:
-            if entry.get(field) is not None and not isinstance(entry[field], str):
-                raise ValueError(f"NPMPlus instance '{name}' field '{field}' must be a string")
-        if not isinstance(entry.get("verify_tls", True), bool):
-            raise ValueError(f"NPMPlus instance '{name}' field 'verify_tls' must be true or false")
-        _check_reference_name(
-            f"NPMPlus instance '{name}' secret",
-            entry.get("secret"),
-            npm_secret_env_pattern(name),
-        )
+def validate_core_config(config, allow_incomplete=False):
+    """Raise ValueError naming the first problem in the settings the core owns.
+
+    The source's endpoint, its credentials and the switches that govern when and
+    whether a run happens are the core's own vocabulary. Everything else belongs to
+    a destination and is checked by :func:`validate_config`, which asks each plugin
+    in turn.
+    """
     _check_reference_name(
         "PVE Scripts Local password",
         config.get("pve_local_password"),
         PSL_SECRET_ENV_PATTERN,
+        hint=PSL_SECRET_HINT,
     )
     if not isinstance(config.get("pve_local_verify_tls", True), bool):
         raise ValueError("PVE Scripts Local field 'pve_local_verify_tls' must be true or false")
-    for key in ("watch_enabled", "auto_apply", "delete_removed_hosts"):
-        if not isinstance(config.get(key), bool):
+    # A caller may hand this a fragment of a settings file - the tests do, and so
+    # does a page saving one tab of the settings - so a switch that is absent is
+    # the default it would be given when the whole file is read, not an error.
+    for key in ("watch_enabled", "auto_apply"):
+        if not isinstance(config.get(key, DEFAULT_CONFIG[key]), bool):
             raise ValueError(f"'{key}' must be true or false")
-    if not isinstance(config.get("vlan_map"), dict):
-        raise ValueError("VLAN map must be a JSON object keyed by VLAN tag")
-    entry_aliases = config.get("entry_aliases")
-    if not isinstance(entry_aliases, dict):
-        raise ValueError("Per-entry aliases must be a JSON object")
-    public_domain = str(config.get("public_domain") or "").strip().lower()
-    for key, names in entry_aliases.items():
-        instance, separator, hostname = str(key).partition(":")
-        if not separator or not INSTANCE_NAME_PATTERN.fullmatch(instance) or not HOST_LABEL_PATTERN.fullmatch(hostname):
-            raise ValueError(f"Per-entry alias key '{key}' must be '<instance>:<guest-hostname>'")
-        if not isinstance(names, list) or any(not isinstance(name, str) for name in names):
-            raise ValueError(f"Per-entry aliases for '{key}' must be a list of hostnames")
-        if names:
-            if not DOMAIN_PATTERN.fullmatch(public_domain):
-                raise ValueError("Set a valid public hostname domain before saving per-entry aliases")
-            normalized = parse_aliases(
-                f"{hostname} = {', '.join(names)}",
-                public_domain,
-            )
-            if hostname not in normalized:
-                raise ValueError(f"Per-entry aliases for '{key}' must include a valid hostname")
-    entry_port_overrides = config.get("entry_port_overrides")
-    if not isinstance(entry_port_overrides, dict):
-        raise ValueError("Per-entry port overrides must be a JSON object")
-    for key, port in entry_port_overrides.items():
-        instance, separator, hostname = str(key).partition(":")
-        if not separator or not INSTANCE_NAME_PATTERN.fullmatch(instance) or not HOST_LABEL_PATTERN.fullmatch(hostname):
-            raise ValueError(f"Per-entry port override key '{key}' must be '<instance>:<guest-hostname>'")
-        if isinstance(port, bool) or not (
-            isinstance(port, int) or isinstance(port, str) and port.isdecimal()
-        ):
-            raise ValueError(f"Per-entry port override for '{key}' must be an integer from 1 to 65535")
-        try:
-            numeric_port = int(port)
-        except (TypeError, ValueError) as error:
-            raise ValueError(f"Per-entry port override for '{key}' must be an integer from 1 to 65535") from error
-        if not 1 <= numeric_port <= 65535:
-            raise ValueError(f"Per-entry port override for '{key}' must be an integer from 1 to 65535")
-    for vlan, mapping in config["vlan_map"].items():
-        if not isinstance(mapping, dict):
-            raise ValueError(f"VLAN {vlan} must be a JSON object with 'instance' and 'zone'")
-        instance = mapping.get("instance")
-        if instance not in instances:
-            raise ValueError(
-                f"VLAN {vlan} points at NPMPlus instance '{instance}', which is not configured; "
-                "add that instance or remove the VLAN row"
-            )
-        if not isinstance(mapping.get("zone"), str) or not mapping["zone"].strip():
-            raise ValueError(f"VLAN {vlan} needs an upstream DNS zone such as internal.example.net")
     raw_interval = config.get("poll_interval_seconds")
     if raw_interval in (None, ""):
         interval = None
@@ -384,75 +213,69 @@ def validate_config(config, allow_incomplete=False):
         if not 30 <= interval <= 86400:
             raise ValueError("Poll interval must be between 30 and 86400 seconds")
     config["poll_interval_seconds"] = interval
-    raw_max_deletes = config.get("max_deletes_per_run")
-    if raw_max_deletes in (None, ""):
-        max_deletes = None
-        if config.get("delete_removed_hosts"):
-            raise ValueError("Set the deletion limit before enabling Delete removed guests")
-    else:
-        try:
-            max_deletes = int(raw_max_deletes)
-        except (TypeError, ValueError) as error:
-            raise ValueError("Max deletions per run must be an integer") from error
-        if not 1 <= max_deletes <= 1000:
-            raise ValueError("Max deletions per run must be between 1 and 1000")
-    config["max_deletes_per_run"] = max_deletes
-    aliases = config.get("aliases", "")
-    if not isinstance(aliases, str):
-        raise ValueError("Alias hostnames must be a text field, one guest per line")
-    # A line that cannot be read is refused here, while the user is looking at the
-    # settings, rather than silently dropping a name from a host at the next run.
-    if aliases.strip() and DOMAIN_PATTERN.fullmatch(str(config.get("public_domain") or "").strip().lower()):
-        parse_aliases(aliases, config.get("public_domain"))
     if not allow_incomplete and not config.get("pve_local_url"):
         raise ValueError("Set the PVE Scripts Local URL first")
 
 
-def public_config(config, environ=None):
-    """Config as sent to the browser; passwords and instance secrets are never included.
+def validate_config(config, allow_incomplete=False, registry=None):
+    """Raise ValueError naming the first problem in the whole settings file.
 
-    An "env:" reference is reported by name plus whether it currently resolves,
-    so the page can tell the user which variable to set without ever seeing a
-    secret value.
+    The core checks its own keys first, then each destination checks the keys it
+    owns, so a plugin's rules are enforced at save time exactly as the core's are.
     """
+    validate_core_config(config, allow_incomplete)
+    (registry or plugin_registry()).validate(config, allow_incomplete)
+
+
+def public_config(config, environ=None, registry=None):
+    """Config as sent to the browser; no password and no secret is ever included.
+
+    The core reports the keys it owns, then asks each destination to report the
+    keys it owns, so a destination's settings reach its own panel without the core
+    reading them. An "env:" reference is reported by name plus whether it
+    currently resolves, so the page can tell the user which variable to set
+    without ever seeing a secret value.
+    """
+    registry = registry or plugin_registry()
+    owned = set(registry.config_keys())
     result = {
         key: value
         for key, value in config.items()
-        if key != "instances" and not (key.endswith("_password") or key.endswith("_secret"))
+        if key not in owned and not (key.endswith("_password") or key.endswith("_secret"))
     }
     psl_password = config.get("pve_local_password")
     result["pve_local_password_configured"] = bool(resolve_secret(psl_password, environ))
     result["pve_local_password_env"] = secret_env_name(psl_password) or ""
-    result["instances"] = {
-        name: {
-            "label": entry.get("label", ""),
-            "url": entry.get("url", ""),
-            "identity": entry.get("identity", ""),
-            "secret_configured": bool(resolve_secret(entry.get("secret"), environ)),
-            "secret_env": secret_env_name(entry.get("secret")) or "",
-            # Reported so the page can restore an endpoint's self-signed switch.
-            "verify_tls": _as_bool(entry.get("verify_tls"), True),
-        }
-        for name, entry in (config.get("instances") or {}).items()
-    }
     result["pve_local_verify_tls"] = _as_bool(config.get("pve_local_verify_tls"), True)
+    result.update(registry.public_config(config, environ=environ))
+    # Named, never valued: the page warns that this settings file holds
+    # credentials in the clear and points at the "env:" alternative.
+    result["plaintext_secrets"] = plaintext_secret_fields(config, registry)
     return result
 
 
 class SyncService:
-    def __init__(self, config_store, state_path, source_adapter=None, destination_adapters=None):
+    def __init__(self, config_store, state_path, source_adapter=None,
+                 destination_adapters=None, registry=None):
         self.config_store = config_store
         self.state_path = Path(state_path)
+        # The destinations this run plans for. Lending every plugin its context
+        # here is what lets a destination read its own settings, write its own
+        # records and answer its own panel without the core wiring any of it up.
+        self.registry = registry or getattr(config_store, "registry", None) or plugin_registry()
         self.source_adapter = source_adapter or PslSourceAdapter(self._source_client)
-        self.destination_adapters = tuple(
-            destination_adapters
-            if destination_adapters is not None
-            else [NpmPlusDestinationAdapter(self._instance_client, reconcile)]
-        )
         self.lock = threading.RLock()
         self.run_lock = threading.Lock()
         self.wake = threading.Event()
         self.stop_event = threading.Event()
+        # Calling for the adapters is also what lends each plugin its context, so
+        # it happens even when a caller supplied adapters of its own. A plugin is
+        # lent the way to ask for a run, never the event itself: clearing a
+        # wake-up that was meant for the watcher is the core's business.
+        lent = self.registry.adapters(
+            self.config_store, self.state_path, self.lock, self.wake.set
+        )
+        self.destination_adapters = tuple(lent if destination_adapters is None else destination_adapters)
         self.status = {
             "state": "idle",
             "message": "Configure the PSL endpoint to begin.",
@@ -505,10 +328,10 @@ class SyncService:
         )
         try:
             config = self.config_store.load()
-            validate_config(config)
+            validate_config(config, registry=self.registry)
             # An unresolved "env:" reference stops the run here, before any client
             # is built with an empty password.
-            check_secret_references(config)
+            check_secret_references(config, registry=self.registry)
             psl_started = perf_counter()
             guests = self.source_adapter.read(
                 config,
@@ -596,7 +419,6 @@ class SyncService:
             timings = {
                 "psl_read_seconds": round(psl_seconds, 3),
                 "planning_seconds": round(planning_seconds, 3),
-                "npmplus_seconds": destination_seconds.get("npmplus", 0),
                 "destinations_seconds": destination_seconds,
                 "source_records": len(guests),
             }
@@ -645,23 +467,35 @@ class SyncService:
             verify_tls=_as_bool(config.get("pve_local_verify_tls"), True),
         )
 
-    @staticmethod
-    def _instance_client(instance, entry):
-        return NpmPlusClient(
-            instance_label(instance, entry),
-            entry.get("url", ""),
-            entry.get("identity", ""),
-            # A stored "env:VAR" reference is swapped for its value only here, so
-            # neither the settings file nor the browser ever holds the password.
-            resolve_secret(entry.get("secret", "")),
-            # Only this instance stops verifying, and only when its switch is off.
-            verify_tls=_as_bool(entry.get("verify_tls"), True),
-        )
+    # --- destinations, one plugin at a time -----------------------------------
+
+    def destinations(self):
+        """What the page needs to render every destination: key, label, panel."""
+        return self.registry.describe()
+
+    def invoke(self, key, action, payload=None):
+        """Run one destination's own panel action, naming only the destination.
+
+        The core forwards the action and its payload without reading either, so a
+        destination's vocabulary - "instance", "proxy host ID", "ownership" - never
+        has to appear here. A destination that offers no panel actions is refused
+        by name rather than by a missing method.
+        """
+        admin = self.registry.admin(key)
+        if admin is None:
+            raise ValueError(f"Destination '{key}' does not offer panel actions")
+        return admin.invoke(action, payload if isinstance(payload, dict) else {})
 
     def test_connection(self, target):
-        """Check saved credentials for 'pve' or any configured NPMPlus instance."""
-        config = self.config_store.load()
-        if target == "pve":
+        """Check the source's credentials, or whichever destination owns the name.
+
+        The page sends a name rather than a plugin key, so every destination that
+        offers panel actions is asked in turn. One that has never heard of the name
+        raises UnknownTarget and the next one is asked; any other failure is a real
+        one and is reported as it stands.
+        """
+        if str(target or "").strip().lower() == "pve":
+            config = self.config_store.load()
             if not config.get("pve_local_url"):
                 raise ValueError("Set the PVE Scripts Local URL first")
             password = config["pve_local_password"]
@@ -672,273 +506,20 @@ class SyncService:
                 resolve_secret(password),
                 verify_tls=_as_bool(config.get("pve_local_verify_tls"), True),
             ).installed_scripts()
-            return {"ok": True, "message": f"PVE Scripts Local reachable: {len(scripts)} installed record(s)."}
-        instances = config.get("instances") or {}
-        if target in instances:
-            entry = instances[target]
-            if not entry.get("url"):
-                raise ValueError(f"Set the URL for NPMPlus instance '{target}' first")
-            # Only this target's reference is required to pass, so an unfinished
-            # instance elsewhere in the file cannot block a working test.
-            check_secret_references({"instances": {target: entry}})
-            client = self._instance_client(target, entry)
-            hosts = client.proxy_hosts()
-            certificates = client.certificates()
             return {
                 "ok": True,
-                "message": (
-                    f"{instance_label(target, entry)} reachable: "
-                    f"{len(hosts)} proxy host(s), {len(certificates)} certificate(s)."
-                ),
+                "message": f"PVE Scripts Local reachable: {len(scripts)} installed record(s).",
             }
+        for plugin in self.registry.plugins():
+            admin = self.registry.admin(plugin.key)
+            if admin is None:
+                continue
+            try:
+                return admin.invoke("test_connection", {"target": target})
+            except UnknownTarget:
+                continue
         raise ValueError(f"Unknown test target '{target}'")
 
-    def list_entries(self):
-        """Every proxy host on every configured instance, and how this app treats it.
-
-        Read-only: it builds a client per instance and never touches the state file,
-        so the page can show what an instance holds without starting a run. An
-        instance that cannot be reached is reported in its own row instead of
-        failing the whole list.
-        """
-        config = self.config_store.load()
-        state = load_state(self.state_path)
-        legacy_aliases = parse_aliases(config.get("aliases", ""), config.get("public_domain")) \
-            if str(config.get("aliases") or "").strip() else {}
-        instances = []
-        configured_instances = sorted(config["instances"].items())
-        clients = {
-            instance: self._instance_client(instance, entry)
-            for instance, entry in configured_instances
-            if entry.get("url")
-        }
-
-        def read_hosts(instance, client):
-            try:
-                return instance, client.proxy_hosts(expand_certificate=False), None
-            except (ApiError, OSError) as error:
-                return instance, [], error
-
-        client_items = list(clients.items())
-        if len(client_items) > 1:
-            with ThreadPoolExecutor(max_workers=min(len(client_items), 8)) as executor:
-                host_results = list(executor.map(lambda row: read_hosts(*row), client_items))
-        else:
-            host_results = [read_hosts(*row) for row in client_items]
-        hosts_by_instance = {
-            instance: (hosts, error)
-            for instance, hosts, error in host_results
-        }
-
-        managed_by_instance = {instance: set() for instance, _ in configured_instances}
-        for key, host_id in (state.get("managed") or {}).items():
-            instance = key.partition(":")[0]
-            if instance in managed_by_instance:
-                managed_by_instance[instance].add(str(host_id))
-        adopted_by_instance = {
-            instance: adopted_host_ids(state, instance)
-            for instance, _ in configured_instances
-        }
-
-        for instance, entry in configured_instances:
-            record = {
-                "instance": instance,
-                "label": instance_label(instance, entry),
-                "url": entry.get("url", ""),
-                "error": "",
-                "hosts": [],
-            }
-            if not entry.get("url"):
-                record["error"] = f"No URL is saved for {record['label']}."
-                instances.append(record)
-                continue
-            hosts, error = hosts_by_instance[instance]
-            if error is not None:
-                record["error"] = str(error)
-                instances.append(record)
-                continue
-            for host in sorted(hosts, key=lambda item: int(item.get("id") or 0)):
-                guest_hostname = str(host.get("forward_host") or "").strip().lower().rstrip(".").split(".", 1)[0]
-                configured_aliases = config["entry_aliases"].get(f"{instance}:{guest_hostname}")
-                record["hosts"].append({
-                    "id": str(host.get("id")),
-                    "domain_names": [str(name) for name in host.get("domain_names", [])],
-                    "guest_hostname": guest_hostname,
-                    "aliases": (
-                        list(configured_aliases)
-                        if configured_aliases is not None
-                        else legacy_aliases.get(guest_hostname, [
-                            str(name) for name in host.get("domain_names", [])[1:]
-                        ])
-                    ),
-                    "forward_scheme": str(host.get("forward_scheme") or ""),
-                    "forward_host": str(host.get("forward_host") or ""),
-                    "forward_port": host.get("forward_port"),
-                    "port_override": config.get("entry_port_overrides", {}).get(
-                        f"{instance}:{guest_hostname}"
-                    ),
-                    "enabled": bool(host.get("enabled", True)),
-                    "ownership": (
-                        "managed"
-                        if str(host.get("id")) in managed_by_instance[instance]
-                        else "adopted"
-                        if str(host.get("id")) in adopted_by_instance[instance]
-                        else "unmanaged"
-                    ),
-                })
-            instances.append(record)
-        return {"instances": instances}
-
-    def set_entry_aliases(self, instance, host_id, aliases):
-        """Save aliases for one guest route without changing another route's names."""
-        instance = str(instance or "").strip().lower()
-        if not isinstance(aliases, list) or any(not isinstance(name, str) for name in aliases):
-            raise ValueError("Aliases must be a list of hostnames")
-        with self._state_lock():
-            config = self.config_store.load()
-            entry, host, _ = self._known_host(instance, host_id)
-            guest_hostname = (
-                str(host.get("forward_host") or "").strip().lower().rstrip(".").split(".", 1)[0]
-            )
-            if not HOST_LABEL_PATTERN.fullmatch(guest_hostname):
-                raise ValueError(
-                    f"Cannot identify the guest hostname for host {host_id} on {instance_label(instance, entry)}"
-                )
-            alias_map = dict(config.get("entry_aliases") or {})
-            key = f"{instance}:{guest_hostname}"
-            cleaned = [name.strip().lower().rstrip(".") for name in aliases if name.strip()]
-            if cleaned:
-                parsed = parse_aliases(
-                    f"{guest_hostname} = {', '.join(cleaned)}",
-                    config.get("public_domain"),
-                )
-                alias_map[key] = parsed[guest_hostname]
-            else:
-                alias_map[key] = []
-            self.config_store.save({"entry_aliases": alias_map})
-            self.wake_loop()
-        return {
-            "ok": True,
-            "guest_hostname": guest_hostname,
-            "aliases": alias_map[key],
-            "message": (
-                f"Saved aliases for {guest_hostname}; they will be applied on the next run."
-                if alias_map[key]
-                else f"Cleared saved aliases for {guest_hostname}; they will be applied on the next run."
-            ),
-        }
-
-    def set_entry_port(self, instance, host_id, port):
-        """Save or clear the detected-port override for one guest route."""
-        instance = str(instance or "").strip().lower()
-        if port in (None, ""):
-            numeric_port = None
-        else:
-            if isinstance(port, bool) or not (
-                isinstance(port, int) or isinstance(port, str) and port.isdecimal()
-            ):
-                raise ValueError("Port override must be an integer from 1 to 65535, or blank to use detection")
-            try:
-                numeric_port = int(port)
-            except (TypeError, ValueError) as error:
-                raise ValueError(
-                    "Port override must be an integer from 1 to 65535, or blank to use detection"
-                ) from error
-            if not 1 <= numeric_port <= 65535:
-                raise ValueError("Port override must be an integer from 1 to 65535, or blank to use detection")
-        with self._state_lock():
-            config = self.config_store.load()
-            entry, host, _ = self._known_host(instance, host_id)
-            guest_hostname = (
-                str(host.get("forward_host") or "").strip().lower().rstrip(".").split(".", 1)[0]
-            )
-            if not HOST_LABEL_PATTERN.fullmatch(guest_hostname):
-                raise ValueError(
-                    f"Cannot identify the guest hostname for host {host_id} on {instance_label(instance, entry)}"
-                )
-            overrides = dict(config.get("entry_port_overrides") or {})
-            key = f"{instance}:{guest_hostname}"
-            if numeric_port is None:
-                overrides.pop(key, None)
-            else:
-                overrides[key] = numeric_port
-            self.config_store.save({"entry_port_overrides": overrides})
-            self.wake_loop()
-        return {
-            "ok": True,
-            "guest_hostname": guest_hostname,
-            "port_override": numeric_port,
-            "message": (
-                f"Saved port override {numeric_port} for {guest_hostname}; it will be applied on the next run."
-                if numeric_port is not None
-                else f"Cleared the port override for {guest_hostname}; PSL detection will be used on the next run."
-            ),
-        }
-
-    def set_ownership(self, instance, host_id, action):
-        """Adopt an entry so a matching guest may update it, or release it again.
-
-        Releasing removes every record kept for that host, so from then on the app
-        leaves the entry as it stands - including when its guest disappears.
-        """
-        action = str(action or "").strip().lower()
-        if action not in {"adopt", "release"}:
-            raise ValueError("Ownership action must be 'adopt' or 'release'")
-        instance = str(instance or "").strip().lower()
-        entry, host, _ = self._known_host(instance, host_id)
-        with self._state_lock():
-            state = load_state(self.state_path)
-            if action == "adopt":
-                adopt_host(state, instance, host["id"])
-            else:
-                forget_host(state, instance, host["id"])
-            save_state(self.state_path, state)
-        label = instance_label(instance, entry)
-        message = (
-            f"{host['id']} on {label} is adopted: a matching guest updates it, and it is never deleted on its own."
-            if action == "adopt"
-            else f"{host['id']} on {label} is no longer owned by this app; it is left alone until you adopt it again."
-        )
-        return {"ok": True, "message": message, "ownership": "adopted" if action == "adopt" else "unmanaged"}
-
-    def delete_entry(self, instance, host_id):
-        """Delete one proxy host from an instance, whatever owns it.
-
-        The watcher's own cleanup is guarded by its switches and deletion limit;
-        this is the page's explicit removal, so it goes ahead once the host is
-        confirmed to still be there. A host this app manages is created again by the
-        next apply while its guest is still in PSL - release it first to keep it away.
-        """
-        instance = str(instance or "").strip().lower()
-        entry, host, client = self._known_host(instance, host_id)
-        label = instance_label(instance, entry)
-        names = ", ".join(str(name) for name in host.get("domain_names", [])) or f"host {host['id']}"
-        with self._state_lock():
-            client.delete_proxy_host(host["id"])
-            state = load_state(self.state_path)
-            forget_host(state, instance, host["id"])
-            save_state(self.state_path, state)
-        return {"ok": True, "message": f"Deleted {names} from {label}."}
-
-    def _known_host(self, instance, host_id):
-        """The saved instance entry and the NPMPlus host it holds right now.
-
-        The ID is checked against what the instance holds at this moment, so a page
-        left open cannot change or delete an entry that has since been replaced.
-        """
-        entry = (self.config_store.load()["instances"] or {}).get(instance)
-        if not isinstance(entry, dict):
-            raise ValueError(f"NPMPlus instance '{instance}' is not configured")
-        if not entry.get("url"):
-            raise ValueError(f"No URL is saved for {instance_label(instance, entry)}")
-        wanted = str(host_id or "").strip()
-        client = self._instance_client(instance, entry)
-        for host in client.proxy_hosts(expand_certificate=False):
-            if str(host.get("id")) == wanted:
-                return entry, host, client
-        raise ValueError(
-            f"Proxy host {wanted or '(none)'} is not on {instance_label(instance, entry)}; reload the entries list"
-        )
 
     @contextmanager
     def _state_lock(self):
