@@ -278,19 +278,6 @@ class Handler(BaseHTTPRequestHandler):
                 config = self.server.config_store.save(self._body())
                 self.server.sync_service.wake_loop()
                 self._json(200, {"ok": True, "config": public_config(config)})
-            elif path == "/api/preview":
-                self._json(200, self.server.sync_service.run_once(
-                    apply_changes=False,
-                    refresh_lxc_config=True,
-                ))
-            elif path == "/api/apply":
-                config = self.server.config_store.load()
-                if not config.get("pve_local_url"):
-                    raise ValueError("Save your connection settings before applying")
-                self._json(200, self.server.sync_service.run_once(
-                    apply_changes=True,
-                    refresh_lxc_config=True,
-                ))
             elif path == "/api/test":
                 self._json(200, self.server.sync_service.test_connection(str(self._body().get("target", ""))))
             elif path == "/api/watch":
@@ -298,13 +285,26 @@ class Handler(BaseHTTPRequestHandler):
                 self.server.sync_service.wake_loop()
                 self._json(200, {"ok": True, "config": public_config(config)})
             elif path.startswith("/api/destinations/"):
-                # One destination's own action. The core forwards the name and the
-                # payload without reading either, so nothing here knows that
-                # NPMPlus calls a host an "entry" or names an instance at all.
-                key = path[len("/api/destinations/"):].strip("/")
-                body = self._body()
-                action = str(body.pop("action", "") or "")
-                self._json(200, self.server.sync_service.invoke(key, action, body))
+                # One destination's own door. Its own page asks for its own Preview
+                # and Apply here, so a run touches that destination and nothing else,
+                # and its own actions travel by name: the core forwards the payload
+                # without reading it, so nothing here knows that NPMPlus calls a host
+                # an "entry" or names an instance at all.
+                parts = path[len("/api/destinations/"):].strip("/").split("/")
+                key = parts[0]
+                verb = parts[1] if len(parts) > 1 else ""
+                if verb in ("preview", "apply"):
+                    self._json(200, self.server.sync_service.run_destination(
+                        key,
+                        apply_changes=verb == "apply",
+                        refresh_lxc_config=True,
+                    ))
+                elif verb:
+                    self._json(404, {"error": f"Unknown destination request '{verb}'"})
+                else:
+                    body = self._body()
+                    action = str(body.pop("action", "") or "")
+                    self._json(200, self.server.sync_service.invoke(key, action, body))
             else:
                 self._json(404, {"error": "Not found"})
         except (ValueError, OSError, json.JSONDecodeError) as error:

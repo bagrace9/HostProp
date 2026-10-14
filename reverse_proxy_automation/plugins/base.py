@@ -105,21 +105,57 @@ class UnknownTarget(ValueError):
     """
 
 
+def _unavailable(what):
+    """A stand-in for a capability the core did not lend this context.
+
+    A registry built without a service - a test, say - has nothing to run and
+    nothing to read, so a destination that asks anyway is refused in words rather
+    than failing later as "NoneType is not callable".
+    """
+
+    def refuse(*_args, **_kwargs):
+        raise RuntimeError(f"This destination was not lent a way to {what}")
+
+    return refuse
+
+
+def destination_runner(run, key):
+    """Bind the core's run callable to one destination's key.
+
+    The core lends a single callable that has to be told which destination it is
+    running. A plugin never names a destination, not even its own, so it is lent
+    this instead: the call itself already says who is asking.
+    """
+
+    def run_destination(apply_changes=False, refresh_lxc_config=True):
+        return run(key, apply_changes=apply_changes, refresh_lxc_config=refresh_lxc_config)
+
+    return run_destination if run is not None else _unavailable(f"run '{key}'")
+
+
 class PluginContext:
     """What the core lends a destination so it can act on the page's behalf.
 
     A plugin never reaches into the service object. It is handed the settings
     store, the state file path, the shared lock and a wake callable, so a
     destination can save its own settings or ask for a run without knowing how
-    the core is wired.
+    the core is wired. It is also handed the two halves of the source: the read
+    that produces the shared snapshot, and the snapshot every destination plans
+    against, so a destination's own Preview and Apply can work with or without
+    the watcher having run.
     """
 
-    def __init__(self, config_store, state_path, lock, wake, registry=None):
+    def __init__(self, config_store, state_path, lock, wake, registry=None,
+                 run=None, source_snapshot=None, refresh_source=None):
         self.config_store = config_store
         self.state_path = state_path
         self.lock = lock
         self.wake = wake
         self.registry = registry
+        # ``run`` is already bound to this destination's key by the registry.
+        self.run = run or _unavailable("run itself")
+        self.source_snapshot = source_snapshot or _unavailable("read the source snapshot")
+        self.refresh_source = refresh_source or _unavailable("read the source")
 
 
 def destination_state(state, key):

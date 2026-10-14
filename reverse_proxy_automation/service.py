@@ -50,8 +50,70 @@ DEFAULT_CONFIG = {
     "poll_interval_seconds": None,
     "watch_enabled": False,
     "auto_apply": False,
+    # {destination key: bool}. A destination with no entry runs, so a settings file
+    # from before this existed keeps writing to every destination it had.
+    "destinations_enabled": {},
+    # {destination key: bool}: whether the watcher may write for that destination
+    # without being asked. The master "auto_apply" above still has to agree, so one
+    # switch stops every destination at once and the per-destination ones refine it.
+    "destinations_auto_apply": {},
 }
 
+# The core's two {destination key: bool} maps. Both are saved and validated the
+# same way, so they are listed here rather than named twice.
+FLAG_MAPS = ("destinations_enabled", "destinations_auto_apply")
+
+
+def destination_enabled(config, key):
+    """Whether a destination takes part in a run. Destinations default to on."""
+    flags = config.get("destinations_enabled")
+    return _as_bool(flags.get(key), True) if isinstance(flags, dict) else True
+
+
+def destination_auto_apply(config, key):
+    """Whether the watcher may apply for this destination without being asked.
+
+    A destination that has never been given a flag applies on its own, so a
+    settings file from before this switch existed keeps working as it did.
+    """
+    flags = config.get("destinations_auto_apply")
+    return _as_bool(flags.get(key), True) if isinstance(flags, dict) else True
+
+
+def destination_applies(config, key):
+    """Whether the watcher may write for one destination by itself.
+
+    The destination's own entry governs this; the master ``auto_apply``
+    now acts as a secondary safety or a global override if desired,
+    but for individual plugin control, this is the primary gate.
+    """
+    return (
+        destination_enabled(config, key)
+        and destination_auto_apply(config, key)
+    )
+
+# The statuses a destination's rows use. A change is something the run made or would
+# make; the attention set is what a user has to look at afterwards.
+CHANGE_STATUSES = {"CREATE", "UPDATE", "DELETE", "DRY-CREATE", "DRY-UPDATE", "DRY-DELETE"}
+ATTENTION_STATUSES = {"CONFLICT", "SKIP", "ERROR"}
+
+
+def _actionable(rows, status_key):
+    """How many of these rows describe a change the run made or would make.
+
+    A destination's own rows are tuples and the aggregate's are the dictionaries
+    sent to the browser, so the caller says where the status lives.
+    """
+    return sum(row[status_key] in CHANGE_STATUSES for row in rows)
+
+
+def _needs_attention(rows, status_key):
+    """How many of these rows are a conflict, a skip or an error."""
+    return sum(row[status_key] in ATTENTION_STATUSES for row in rows)
+
+
+# The name the core's own secret is described by, wherever it is reported.
+PSL_SECRET_DESCRIPTION = "PVE Scripts Local password"
 # The one env reference the core's own secret field accepts. Each destination
 # names the variables its own secrets accept.
 PSL_SECRET_ENV_PATTERN = re.compile(r"^PVE_LOCAL_PASSWORD$")
@@ -78,8 +140,10 @@ def secret_fields(config, registry=None):
     so a log line or a settings page can point at the field that needs setting
     without the core knowing which destination owns it.
     """
-    yield "PVE Scripts Local password", config.get("pve_local_password")
-    yield from (registry or plugin_registry()).secret_fields(config)
+    yield PSL_SECRET_DESCRIPTION, config.get("pve_local_password")
+    yield from (registry or plugin_registry()).secret_fields(
+        config, enabled=lambda key: destination_enabled(config, key)
+    )
 
 
 def unresolved_secret_references(config, environ=None, registry=None):
@@ -106,6 +170,17 @@ def check_secret_references(config, environ=None, registry=None):
     return _check_secret_fields(secret_fields(config, registry), environ)
 
 
+def check_source_secret_references(config, environ=None):
+    """Raise ValueError for the source's own unresolved "env:" reference only.
+
+    Reading PSL needs the source's credentials and nothing else, so the watcher's
+    one read must not be stopped by a destination's unset variable - that is the
+    destination's own problem, reported when it is used.
+    """
+    fields = [(PSL_SECRET_DESCRIPTION, config.get("pve_local_password"))]
+    return _check_secret_fields(fields, environ)
+
+
 def normalize_config(loaded, registry=None):
     """Merge a stored settings file with the defaults every destination declares.
 
@@ -121,7 +196,18 @@ def normalize_config(loaded, registry=None):
     config["pve_local_verify_tls"] = _as_bool(config.get("pve_local_verify_tls"), True)
     for key in ("watch_enabled", "auto_apply"):
         config[key] = _as_bool(config.get(key), False)
+    for name in FLAG_MAPS:
+        config[name] = _flag_map(loaded, name)
     return config
+
+
+def _flag_map(loaded, name):
+    """One {destination key: bool} map read out of a stored settings file."""
+    flags = loaded.get(name)
+    return {
+        str(key): _as_bool(value, True)
+        for key, value in (flags.items() if isinstance(flags, dict) else ())
+    }
 
 
 class ConfigStore:
@@ -148,6 +234,14 @@ class ConfigStore:
             config = {**old}
             for key in DEFAULT_CONFIG:
                 if key not in submitted:
+                    continue
+                if key in FLAG_MAPS:
+                    if not isinstance(submitted[key], dict):
+                        raise ValueError(f"'{key}' must be a JSON object keyed by destination")
+                    config[key] = {
+                        **old[key],
+                        **{str(name): _as_bool(flag, True) for name, flag in submitted[key].items()},
+                    }
                     continue
                 value = submitted[key]
                 if key.endswith("_password") or key.endswith("_secret"):
@@ -187,7 +281,7 @@ def validate_core_config(config, allow_incomplete=False):
     in turn.
     """
     _check_reference_name(
-        "PVE Scripts Local password",
+        PSL_SECRET_DESCRIPTION,
         config.get("pve_local_password"),
         PSL_SECRET_ENV_PATTERN,
         hint=PSL_SECRET_HINT,
@@ -200,6 +294,10 @@ def validate_core_config(config, allow_incomplete=False):
     for key in ("watch_enabled", "auto_apply"):
         if not isinstance(config.get(key, DEFAULT_CONFIG[key]), bool):
             raise ValueError(f"'{key}' must be true or false")
+    for name in FLAG_MAPS:
+        flags = config.get(name, {})
+        if not isinstance(flags, dict) or any(not isinstance(flag, bool) for flag in flags.values()):
+            raise ValueError(f"'{name}' must hold a true/false flag for each destination")
     raw_interval = config.get("poll_interval_seconds")
     if raw_interval in (None, ""):
         interval = None
@@ -224,7 +322,9 @@ def validate_config(config, allow_incomplete=False, registry=None):
     owns, so a plugin's rules are enforced at save time exactly as the core's are.
     """
     validate_core_config(config, allow_incomplete)
-    (registry or plugin_registry()).validate(config, allow_incomplete)
+    (registry or plugin_registry()).validate(
+        config, allow_incomplete, enabled=lambda key: destination_enabled(config, key)
+    )
 
 
 def public_config(config, environ=None, registry=None):
@@ -270,50 +370,149 @@ class SyncService:
         self.stop_event = threading.Event()
         # Calling for the adapters is also what lends each plugin its context, so
         # it happens even when a caller supplied adapters of its own. A plugin is
-        # lent the way to ask for a run, never the event itself: clearing a
-        # wake-up that was meant for the watcher is the core's business.
+        # lent the way to ask for one run of itself, never the event itself:
+        # clearing a wake-up that was meant for the watcher is the core's business.
         lent = self.registry.adapters(
-            self.config_store, self.state_path, self.lock, self.wake.set
+            self.config_store, self.state_path, self.lock, self.wake.set,
+            run=self._run_destination_for,
+            source_snapshot=self.source_snapshot,
+            refresh_source=self.refresh_source,
         )
         self.destination_adapters = tuple(lent if destination_adapters is None else destination_adapters)
+        # The one read of PSL that every destination plans against, published by
+        # refresh_source() and reused by every destination until the watcher
+        # refreshes it again. Held under the lock with the results below.
+        self.snapshot = None
+        # {destination key: what that destination last did}. The top-level status
+        # is the aggregate of these, so a plugin's page can show its own rows
+        # without the core knowing what any destination's rows are called.
+        self.results = {}
         self.status = {
             "state": "idle",
             "message": "Configure the PSL endpoint to begin.",
             "last_check": None,
             "last_apply": None,
             "guest_count": 0,
-            "planned": [],
-            "skipped": [],
             "timings": {},
         }
         self.thread = threading.Thread(target=self._run_loop, name="psl-sync", daemon=True)
         self.thread.start()
 
     def get_status(self):
+        """The page's view of the last runs: the source's read plus each destination.
+
+        The plan rows stay published at the top level, because that is what a
+        result table reads, and every destination's own rows are published under
+        ``destinations``, keyed by plugin key, so a plugin can show only its own
+        without the core having to filter anything.
+        """
         with self.lock:
-            return dict(self.status)
+            status = dict(self.status)
+            results = self._results_in_order()
+            status["destinations"] = results
+            status["planned"] = [
+                row for result in results.values() for row in result.get("planned", [])
+            ]
+            status["skipped"] = [
+                row for result in results.values() for row in result.get("skipped", [])
+            ]
+            return status
+
+    def _results_in_order(self):
+        """Per-destination results, in the order the destinations are registered.
+
+        The caller holds the lock. Rows for a destination that was removed from
+        the settings file still appear, last, rather than being silently dropped.
+        """
+        order = [adapter.key for adapter in self.destination_adapters]
+        keys = [key for key in order if key in self.results]
+        keys.extend(key for key in self.results if key not in order)
+        return {key: dict(self.results[key]) for key in keys}
 
     def _set_status(self, **updates):
         with self.lock:
             self.status.update(updates)
+
+    def _busy(self, message):
+        """The status a caller gets when another run already holds the lock."""
+        return {**self.get_status(), "state": "busy", "message": message}
+
+    def _fail(self, error):
+        """Publish a failure the way a run does: a state, a message, and no rows."""
+        self._set_status(
+            state="error",
+            message=str(error),
+            last_check=datetime.now(timezone.utc).isoformat(),
+            guest_count=0,
+        )
+        return self.get_status()
+
+    def _run_destination_for(self, key, apply_changes=False, refresh_lxc_config=True):
+        """Run one destination on its plugin's own request, bound to that plugin's key.
+
+        This is what a plugin is lent as ``PluginContext.run``: the plugin decides
+        when its own page's Preview and Apply should read PSL again, and the core
+        keeps the locking, the snapshot and the status to itself.
+        """
+        return self.run_destination(
+            key,
+            apply_changes=apply_changes,
+            refresh_lxc_config=refresh_lxc_config,
+        )
 
     def run_once(self, apply_changes=False, refresh_lxc_config=False):
         # Only one preview/apply may run at a time (watcher thread vs HTTP handlers).
         # A manual run must wait for a watcher run, rather than returning the
         # watcher's status as if the requested fresh Preview/Apply had run.
         if not self.run_lock.acquire(blocking=refresh_lxc_config):
-            status = self.get_status()
-            return {
-                **status,
-                "state": "busy",
-                "message": "A sync run is already in progress; this request did not start a new preview or apply.",
-            }
+            return self._busy(
+                "A sync run is already in progress; this request did not start a new preview or apply."
+            )
         try:
             return self._run_once(apply_changes, refresh_lxc_config)
         finally:
             self.run_lock.release()
 
     def _run_once(self, apply_changes, refresh_lxc_config=False):
+        """Read the source once, then run every enabled destination off that snapshot.
+
+        This is the whole-app entry point: the HTTP shell no longer calls it, but a
+        full run still reads PSL once, plans every destination that is switched on
+        against the same records, and publishes one aggregate status.
+        """
+        try:
+            config = self.config_store.load()
+            validate_config(config, registry=self.registry)
+            # An unresolved "env:" reference stops the run here, before any client
+            # is built with an empty password.
+            check_secret_references(config, registry=self.registry)
+            guests, psl_seconds = self._read_source(config, refresh_lxc_config)
+            if guests is None:
+                return self.get_status()
+            active = [
+                adapter for adapter in self.destination_adapters
+                if destination_enabled(config, adapter.key)
+            ]
+            return self._run_destinations(config, guests, active, apply_changes, psl_seconds)
+        except Exception as error:
+            return self._fail(error)
+
+    def source_snapshot(self):
+        """The guest records the last read produced, or None when none are held.
+
+        Every destination plans against this one snapshot, so a single read of PSL
+        serves all of them. The records are shared, so treat them as read-only.
+        """
+        with self.lock:
+            return dict(self.snapshot) if self.snapshot else None
+
+    def _read_source(self, config, refresh_lxc_config=False):
+        """Read PSL once and publish the snapshot. Returns (guests, seconds).
+
+        Returns (None, None) when the read failed, having published the failure the
+        way a run does. A failed read drops every destination's rows: they were
+        planned against records the source can no longer confirm.
+        """
         self._set_status(
             state="checking",
             message=(
@@ -322,16 +521,9 @@ class SyncService:
                 else "Reading installed records from PVE Scripts Local."
             ),
             guest_count=0,
-            planned=[],
-            skipped=[],
             timings={},
         )
         try:
-            config = self.config_store.load()
-            validate_config(config, registry=self.registry)
-            # An unresolved "env:" reference stops the run here, before any client
-            # is built with an empty password.
-            check_secret_references(config, registry=self.registry)
             psl_started = perf_counter()
             guests = self.source_adapter.read(
                 config,
@@ -347,30 +539,162 @@ class SyncService:
                 ) if refresh_lxc_config else None,
             )
             psl_seconds = perf_counter() - psl_started
-            self._set_status(
-                message=(
-                    f"Read {len(guests)} guest record(s) from PSL in {psl_seconds:.2f}s; "
-                    "building destination plans."
-                )
-            )
-            planning_started = perf_counter()
-            destination_plans = [
-                (adapter, adapter.plan(guests, config))
-                for adapter in self.destination_adapters
-            ]
-            planning_seconds = perf_counter() - planning_started
+        except Exception as error:
+            with self.lock:
+                self.snapshot = None
+                self.results.clear()
+            LOGGER.warning("Reading the source failed: %s", error)
+            # Publish the failure the way a run does, so a page that is waiting on
+            # this read sees what went wrong rather than the "checking" it set above.
+            self._fail(error)
+            return None, None
+        now = datetime.now(timezone.utc).isoformat()
+        with self.lock:
+            self.snapshot = {
+                "guests": list(guests),
+                "read_at": now,
+                "seconds": round(psl_seconds, 3),
+                "refresh_lxc_config": bool(refresh_lxc_config),
+            }
+        self._set_status(
+            state="ok",
+            message=(
+                f"Read {len(guests)} guest record(s) from PSL in {psl_seconds:.2f}s; "
+                "building destination plans."
+            ),
+            last_check=now,
+            guest_count=len(guests),
+            timings={"psl_read_seconds": round(psl_seconds, 3), "source_records": len(guests)},
+        )
+        return guests, psl_seconds
 
-            state = load_state(self.state_path)
+    def refresh_source(self, refresh_lxc_config=False, wait=True):
+        """Read PSL once and keep the records for every destination to plan against.
+
+        This is the whole of what the watcher does on its interval: the plugins then
+        pull this snapshot when their own preview, apply or automatic run asks for
+        it. Only the core's own settings are checked, because a destination that is
+        half-configured must not stop the one read all the others depend on.
+        """
+        if not self.run_lock.acquire(blocking=wait):
+            return self._busy("A sync run is already in progress; the source was not read again.")
+        try:
             try:
-                self._set_status(
-                    message=(
-                        f"Built {len(destination_plans)} destination plan(s) in "
-                        f"{planning_seconds:.2f}s; applying destinations."
-                    )
-                )
-                rows = []
-                destination_seconds = {}
-                for adapter, destination_plan in destination_plans:
+                config = self.config_store.load()
+                validate_core_config(config)
+                # An unresolved "env:" reference stops the read here, before any
+                # client is built with an empty password. This read is the source's
+                # own, so a destination's unset variable is not this run's problem.
+                check_source_secret_references(config)
+            except Exception as error:
+                return self._fail(error)
+            self._read_source(config, refresh_lxc_config)
+            return self.get_status()
+        finally:
+            self.run_lock.release()
+
+    def run_destination(self, key, apply_changes=False, refresh_lxc_config=False, wait=True):
+        """Preview or apply for one destination, and only that destination.
+
+        A destination asked right now reads PSL again when it was told to or when
+        nothing has been read yet, so a plugin's own page never depends on the
+        watcher having run. Its rows are published under its own key, and its
+        settings are the only plugin settings checked.
+        """
+        adapter = next((item for item in self.destination_adapters if item.key == key), None)
+        if adapter is None:
+            raise ValueError(f"Unknown destination '{key}'")
+        if not self.run_lock.acquire(blocking=wait):
+            return self._busy(f"A sync run is already in progress; {adapter.label} did not run.")
+        try:
+            config = self.config_store.load()
+            if not destination_enabled(config, key):
+                return self._fail(f"{adapter.label} is switched off; turn it on to run it.")
+            snapshot = self.source_snapshot()
+            if snapshot is None or refresh_lxc_config:
+                guests, psl_seconds = self._read_source(config, refresh_lxc_config)
+                if guests is None:
+                    return self.get_status()
+            else:
+                guests = snapshot["guests"]
+                psl_seconds = snapshot["seconds"]
+            return self._run_destinations(config, guests, [adapter], apply_changes, psl_seconds)
+        except Exception as error:
+            return self._fail(error)
+        finally:
+            self.run_lock.release()
+
+    def auto_apply(self, config=None):
+        """Apply the current snapshot to every destination left to apply on its own.
+
+        The watcher reads the source first and then calls this. Two switches have to
+        agree - the master "Automatically apply" and the destination's own entry -
+        so one destination can be left to be applied by hand while the rest are
+        written on the watcher's interval.
+        """
+        if not self.run_lock.acquire(blocking=False):
+            return self._busy("A sync run is already in progress; this background apply was skipped.")
+        try:
+            config = config if isinstance(config, dict) else self.config_store.load()
+            validate_core_config(config)
+            appliers = [
+                adapter for adapter in self.destination_adapters
+                if destination_applies(config, adapter.key)
+            ]
+            if not appliers:
+                return self.get_status()
+            snapshot = self.source_snapshot()
+            if snapshot is None:
+                # The watcher reads before it applies, so a gap here is a read that
+                # failed: read now rather than write what the source last said.
+                guests, psl_seconds = self._read_source(config, True)
+                if guests is None:
+                    return self.get_status()
+            else:
+                guests = snapshot["guests"]
+                psl_seconds = snapshot["seconds"]
+            return self._run_destinations(config, guests, appliers, True, psl_seconds)
+        except Exception as error:
+            return self._fail(error)
+        finally:
+            self.run_lock.release()
+
+    def _validate_destination(self, config, key):
+        """Check the core's settings and this destination's, and no other's.
+
+        A destination that is misconfigured used to stop every other one from being
+        planned at all. Only the plugin being run is asked now, so a broken plugin
+        costs its own page and nothing else.
+        """
+        validate_core_config(config)
+        plugin = self.registry.get(key)
+        if plugin is not None:
+            plugin.validate(config)
+
+    def _run_destinations(self, config, guests, active, apply_changes=False, psl_seconds=0.0):
+        """Plan and apply for the destinations named, recording what each one did.
+
+        One destination failing must not stop or hide the others: its own rows are
+        replaced by its error and the rest still run. A run that asked for a single
+        destination raises instead, so the page that asked for it is told what went
+        wrong rather than being shown an aggregate.
+        """
+        state = load_state(self.state_path)
+        failures = []
+        planning_seconds = 0.0
+        destination_seconds = {}
+        guest_counts = []
+        self._set_status(state="checking", message="Building destination plans.")
+        try:
+            for adapter in active:
+                try:
+                    # Only the destination about to run is asked about its own
+                    # settings, so one broken plugin cannot stop the others.
+                    self._validate_destination(config, adapter.key)
+                    planning_started = perf_counter()
+                    destination_plan = adapter.plan(guests, config)
+                    destination_planning = perf_counter() - planning_started
+                    self._set_status(message=f"Planned {adapter.label}; applying.")
                     destination_started = perf_counter()
                     destination_rows = adapter.apply(
                         destination_plan,
@@ -378,84 +702,132 @@ class SyncService:
                         state,
                         apply_changes=apply_changes,
                     )
-                    destination_seconds[adapter.key] = round(
-                        perf_counter() - destination_started, 3
+                except Exception as error:
+                    if len(active) == 1:
+                        raise
+                    # One destination failing must not stop or hide the others.
+                    LOGGER.exception("Destination %s failed", adapter.label)
+                    failures.append(f"{adapter.label}: {error}")
+                    self._record_destination_result(
+                        adapter,
+                        state="error",
+                        message=str(error),
+                        apply_changes=apply_changes,
+                        guest_count=len(guests),
                     )
-                    rows.extend((adapter.label, *row) for row in destination_rows)
-                    for row in destination_rows:
-                        if row[0] != "OK":
-                            LOGGER.info(
-                                "Sync result: destination=%s status=%s target=%s resource=%s",
-                                adapter.label,
-                                row[0],
-                                row[1],
-                                row[2],
-                            )
-            finally:
-                # Persist ownership of anything already created, even if a later step failed.
-                if apply_changes:
-                    save_state(self.state_path, state)
-            now = datetime.now(timezone.utc).isoformat()
-            actionable = sum(
-                row[1] in {"CREATE", "UPDATE", "DELETE", "DRY-CREATE", "DRY-UPDATE", "DRY-DELETE"}
-                for row in rows
-            )
-            skipped_rows = [
-                {"name": name, "reason": reason, "destination": adapter.label}
-                for adapter, destination_plan in destination_plans
-                for name, reason in destination_plan.get("skipped", [])
-            ]
-            skipped_rows.extend(
-                {
-                    "name": row[3],
-                    "reason": row[4],
-                    "instance": row[2],
-                    "destination": row[0],
-                    "status": row[1],
-                }
-                for row in rows if row[1] in {"CONFLICT", "SKIP", "ERROR"}
-            )
-            mode = "Applied" if apply_changes else "Previewed"
-            timings = {
+                    continue
+                planning_seconds += destination_planning
+                destination_seconds[adapter.key] = round(
+                    perf_counter() - destination_started, 3
+                )
+                for row in destination_rows:
+                    if row[0] == "OK":
+                        continue
+                    LOGGER.info(
+                        "Sync result: destination=%s status=%s target=%s resource=%s",
+                        adapter.label, row[0], row[1], row[2],
+                    )
+                guest_count = destination_plan.get("containers", len(guests))
+                guest_counts.append(guest_count)
+                self._record_destination_result(
+                    adapter,
+                    state="ok",
+                    message=self._destination_message(destination_rows, destination_plan, apply_changes),
+                    apply_changes=apply_changes,
+                    guest_count=guest_count,
+                    rows=destination_rows,
+                    plan=destination_plan,
+                )
+        finally:
+            # Persist ownership of anything already created, even if a later step failed.
+            if apply_changes:
+                save_state(self.state_path, state)
+        now = datetime.now(timezone.utc).isoformat()
+        results = self._results_in_order()
+        planned = [row for result in results.values() for row in result.get("planned", [])]
+        skipped = [row for result in results.values() for row in result.get("skipped", [])]
+        mode = "Applied" if apply_changes else "Previewed"
+        message = (
+            f"{mode} {_actionable(planned, status_key='status')} change(s); "
+            f"{len(skipped)} item(s) need attention."
+        )
+        if not active:
+            message = f"Read {len(guests)} guest record(s) from PSL; no destination is enabled."
+        if failures:
+            message = f"{'; '.join(failures)}. {message}"
+        self._set_status(
+            state="error" if failures else "ok",
+            message=message,
+            last_check=now,
+            last_apply=now if apply_changes else self.get_status().get("last_apply"),
+            guest_count=max(guest_counts, default=len(guests)),
+            timings={
                 "psl_read_seconds": round(psl_seconds, 3),
                 "planning_seconds": round(planning_seconds, 3),
                 "destinations_seconds": destination_seconds,
                 "source_records": len(guests),
+            },
+        )
+        return self.get_status()
+
+    @staticmethod
+    def _destination_message(rows, plan, apply_changes):
+        """One destination's own summary, counted the way the aggregate counts it.
+
+        ``rows`` are the destination's own shape - ``(status, instance, domain,
+        details)`` - because that is what the plugin hands back.
+        """
+        mode = "Applied" if apply_changes else "Previewed"
+        actionable = _actionable(rows, status_key=0)
+        attention = len(plan.get("skipped", ())) + _needs_attention(rows, status_key=0)
+        return f"{mode} {actionable} change(s); {attention} item(s) need attention."
+
+    def _record_destination_result(self, adapter, *, state, message, apply_changes,
+                                   guest_count=0, rows=(), plan=None):
+        """Store what one destination last did, for its own page and the results table.
+
+        A destination's rows are its own: the core keeps them under the destination's
+        key without knowing what a row means, which is what lets each plugin render
+        its own results and nothing else's. Each row is named with the destination it
+        came from as it is kept, so one table can show every destination's rows
+        without any plugin having to know it is not the only one on the page.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        planned = [
+            {
+                "destination": adapter.label,
+                "status": row[0],
+                "instance": row[1],
+                "domain": row[2],
+                "details": row[3],
             }
-            guest_count = max(
-                (plan.get("containers", len(guests)) for _, plan in destination_plans),
-                default=len(guests),
-            )
-            self._set_status(
-                state="ok",
-                message=f"{mode} {actionable} change(s); {len(skipped_rows)} item(s) need attention.",
-                last_check=now,
-                last_apply=now if apply_changes else self.get_status().get("last_apply"),
-                guest_count=guest_count,
-                planned=[
-                    {
-                        "destination": row[0],
-                        "status": row[1],
-                        "instance": row[2],
-                        "domain": row[3],
-                        "details": row[4],
-                    }
-                    for row in rows
-                ],
-                skipped=skipped_rows,
-                timings=timings,
-            )
-            return self.get_status()
-        except Exception as error:
-            self._set_status(
-                state="error",
-                message=str(error),
-                last_check=datetime.now(timezone.utc).isoformat(),
-                guest_count=0,
-                planned=[],
-                skipped=[],
-            )
-            return self.get_status()
+            for row in rows
+        ]
+        skipped = [
+            {"name": name, "reason": reason, "destination": adapter.label}
+            for name, reason in (plan or {}).get("skipped", ())
+        ]
+        skipped.extend(
+            {
+                "name": row[2],
+                "reason": row[3],
+                "instance": row[1],
+                "destination": adapter.label,
+                "status": row[0],
+            }
+            for row in rows if row[0] in ATTENTION_STATUSES
+        )
+        with self.lock:
+            previous = self.results.get(adapter.key, {})
+            self.results[adapter.key] = {
+                "state": state,
+                "message": message,
+                "last_check": now,
+                "last_apply": now if apply_changes else previous.get("last_apply"),
+                "guest_count": guest_count,
+                "planned": planned,
+                "skipped": skipped,
+            }
 
     @staticmethod
     def _source_client(config):
@@ -554,10 +926,11 @@ class SyncService:
                 configured_interval = config.get("poll_interval_seconds")
                 interval = 30 if configured_interval is None else max(30, int(configured_interval))
                 if config.get("watch_enabled"):
-                    self.run_once(
-                        apply_changes=config.get("auto_apply", False),
-                        refresh_lxc_config=True,
-                    )
+                    # The watcher's own job is the source: one read that every
+                    # destination plans against. Whether a destination is written is
+                    # decided afterwards, per destination, by its own switch.
+                    self.refresh_source(refresh_lxc_config=True)
+                    self.auto_apply(config)
             except Exception as error:
                 LOGGER.exception("Background watcher iteration failed")
                 self._set_status(

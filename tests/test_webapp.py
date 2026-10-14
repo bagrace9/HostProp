@@ -76,14 +76,16 @@ class DashboardShellTests(unittest.TestCase):
 
     def test_the_shell_shows_the_destinations_it_mounted(self):
         page = shell_page()
-        # The seam is visible, not just real: the card names what the core
-        # reported, the panel file and tabs each destination brought, and it
-        # says plainly what an install with nothing registered can do.
+        # Results are grouped by the plugin that produced them, so the page shows
+        # which plugin planned or failed what, and an install with nothing
+        # registered says so plainly.
         self.assertIn('id="destination-card"', page)
         self.assertIn('id="destination-list"', page)
         self.assertIn('id="destination-badge"', page)
-        self.assertIn("function destinationRow(described)", page)
+        self.assertIn('id="results-by-destination"', page)
         self.assertIn("function renderDestinations(listed)", page)
+        self.assertIn("function renderResults(status)", page)
+        self.assertIn("function paintDestinationState(status)", page)
         for marker in (
             "chunk.dataset.destination=descriptor.key",
             "tab.dataset.destination=descriptor.key",
@@ -93,46 +95,68 @@ class DashboardShellTests(unittest.TestCase):
             'const list=$("destination-list")',
         ):
             self.assertIn(marker, page)
-        # A destination's first tab is one click away from the card, and a run
-        # with nothing registered says so instead of listing nothing.
-        self.assertIn("showTab(tabs[0],true)", page)
         self.assertIn("No destination is installed, so a run has nothing to write to.", page)
-
-    def test_the_strip_says_which_tabs_a_plugin_brought(self):
-        page = shell_page()
-        # The strip holds the shell's own tab beside the tabs a plugin mounted, so
-        # the legend under it names the owner of each entry. A reader can then see
-        # that most of the page is an installed plugin rather than the app itself.
-        self.assertIn('id="tab-sources"', page)
-        self.assertIn("function renderTabSources(listed)", page)
-        self.assertIn("renderTabSources(listed)", page)
-        self.assertIn('legendItem("core-tag","built in"', page)
-        self.assertIn('legendItem("plugin-tag","plugin"', page)
-        # A mounted tab carries its owner in the strip itself, so the boundary stays
-        # visible while one of a plugin's own tabs is open, and the tabs it brought
-        # are listed as chips on its card.
-        self.assertIn(".tab[data-destination]{box-shadow", page)
-        self.assertIn("tab.title=`From the ${descriptor.label||descriptor.key} destination plugin`;", page)
-        self.assertIn("descriptor.tabLabels.push(tab.textContent.trim()||tab.dataset.tab)", page)
-        self.assertIn('chips.className="plugin-chip-row"', page)
-
-    def test_a_plugins_own_section_is_captioned_with_its_plugin(self):
-        page = shell_page()
-        # A section a plugin mounted is drawn by the plugin, so the shell captions
-        # it with the plugin that brought it and the app's own panel is the only
-        # one left uncaptioned. The words come off the element, so the rule names no
-        # destination and a second plugin needs no change here.
-        self.assertIn('content:"Plugin: " attr(data-plugin-label)', page)
-        self.assertIn("node.dataset.pluginLabel=descriptor.label||descriptor.key", page)
-        self.assertIn('node.classList.add("plugin-owned")', page)
-        self.assertIn('if(chunk.dataset.host!=="tabs"){', page)
-        self.assertIn('const carrier=chunk.style.display==="contents"', page)
-        self.assertIn("markPluginSurface(surface,descriptor)", page)
-        # The shell's own panel says in words that it shipped with the app, so the
-        # contrast with a caption is explicit rather than implied.
-        self.assertIn('<span class="tag core-tag">built in</span>', page)
-        self.assertIn("<h2>Destination plugins</h2>", page)
         self.assertIn('"No destination plugins"', page)
+
+    def test_psl_is_the_primary_source_and_plugins_hang_off_it(self):
+        page = shell_page()
+        # The page is not one strip of equal tabs. The rail separates the required,
+        # built-in source from the optional destination plugins, and the overview
+        # draws the flow from the one to the others.
+        self.assertIn('<nav class="rail"', page)
+        self.assertLess(page.index('data-nav="psl"'), page.index('id="destination-list"'))
+        self.assertIn('Source <small class="req">required</small>', page)
+        self.assertIn("Destination plugins <small>optional</small>", page)
+        self.assertIn('class="nav-item source-item"', page)
+        self.assertLess(page.index('class="flow-source"'), page.index('class="flow-targets"'))
+        self.assertIn('id="flow-plugins"', page)
+        self.assertIn("function renderFlow(listed)", page)
+        self.assertIn("function paintFlow(status)", page)
+        # PSL is a page of its own, outside the container the plugin pages go into.
+        self.assertIn('id="page-psl" data-page="psl"', page)
+        self.assertLess(page.index('id="page-psl"'), page.index('id="destination-pages"'))
+        self.assertIn('<span class="kicker">Source</span>', page)
+        self.assertIn("Destination plugin", page)
+        # Plugin chunks are staged out of sight, then moved onto that plugin's page.
+        self.assertIn('id="plugin-staging" hidden', page)
+        for host in ("tabs", "panels", "side"):
+            self.assertIn(f'data-plugin-host="{host}"', page)
+
+    def test_a_plugin_can_be_switched_off_from_its_own_page(self):
+        page = shell_page()
+        # Every plugin page carries an enable switch, so a plugin can be taken out of
+        # runs without touching PSL or any other plugin; the page says so while off.
+        self.assertIn("toggle.dataset.destinationSwitch=described.key", page)
+        self.assertIn("function collectEnabled()", page)
+        self.assertIn("config.destinations_enabled=collectEnabled()", page)
+        self.assertIn("function paintEnabled(config)", page)
+        self.assertIn("paintEnabled(config);paintPlaintextWarning(config)", page)
+        self.assertIn("is switched off. Runs skip it and its settings are not checked", page)
+        self.assertIn(".dest-page.off .dest-body", page)
+
+    def test_a_plugin_can_be_left_for_manual_apply_from_its_own_page(self):
+        page = shell_page()
+        # The watcher's writes are gated twice: the master switch on the Run card and
+        # each plugin's own entry. A plugin left for manual apply is left out of the
+        # watcher's run, so its page has to say so.
+        self.assertIn("autoToggle.dataset.destinationAutoApply=described.key", page)
+        self.assertIn("function collectAutoApply()", page)
+        self.assertIn("config.destinations_auto_apply=collectAutoApply()", page)
+        self.assertIn("function paintAutoApply(config)", page)
+        self.assertIn("paintPlaintextWarning(config);paintAutoApply(config)", page)
+        # The switch sits in the plugin page's head, above the panels it brought, with
+        # a line stating what the two switches together mean for that plugin.
+        self.assertLess(
+            page.index("autoToggle.dataset.destinationAutoApply=described.key"),
+            page.index('const body=document.createElement("div");body.className="dest-body";'),
+        )
+        self.assertIn("controls.append(control,auto,autoHint,runBox);head.append(text,controls);", page)
+        self.assertIn("autoToggle.onchange=()=>saveConfig()", page)
+        self.assertIn("function paintAutoApplyHints()", page)
+        self.assertIn('hint.dataset.state=written?"":"blocked"', page)
+        self.assertIn("Left for manual apply: the watcher reads PSL and writes nothing here.", page)
+        self.assertIn("The master Automatically apply switch is off, so the watcher only reads PSL and writes nothing.", page)
+        self.assertIn("paintAutoApplyHints();saveConfig()", page)
 
     def test_the_shell_reads_only_elements_it_owns(self):
         page = shell_page()
@@ -190,9 +214,9 @@ class DashboardShellTests(unittest.TestCase):
         self.assertIn('toast(error.message,"error")', page)
         # Preview and Apply save the page first, so the service never runs a stale
         # settings file, and the toast repeats what the returned status said.
-        self.assertIn("await saveConfig();toast(`${verb} started;", page)
+        self.assertIn("await saveConfig();toast(`${verb} ${label} started;", page)
         self.assertIn("const status=await api(path,{})", page)
-        self.assertIn('else if(status.state==="error")toast(`${verb} failed: ', page)
+        self.assertIn('else if(status.state==="error")toast(`${verb} ${label} failed: ', page)
         self.assertIn('if(status.state==="busy")toast(status.message,"error")', page)
 
     def test_api_errors_explain_file_urls_and_non_json_responses(self):
@@ -206,14 +230,40 @@ class DashboardShellTests(unittest.TestCase):
         from reverse_proxy_automation import webapp
 
         source = Path(webapp.__file__).read_text(encoding="utf-8")
-        self.assertIn('path == "/api/preview"', source)
-        self.assertIn('path == "/api/apply"', source)
-        self.assertEqual(source.count("refresh_lxc_config=True"), 2)
+        # Preview and Apply are asked for at the one destination's own door, so a run
+        # reads PSL fresh and touches the plugin whose page asked and no other. There
+        # is no whole-install run left to ask for.
+        self.assertIn('verb in ("preview", "apply")', source)
+        self.assertIn('apply_changes=verb == "apply"', source)
+        self.assertIn("refresh_lxc_config=True", source)
+        self.assertNotIn('path == "/api/preview"', source)
+        self.assertNotIn('path == "/api/apply"', source)
         service_source = Path(webapp.__file__).with_name("service.py").read_text(encoding="utf-8")
-        self.assertIn("refresh_lxc_config=True,", service_source)
+        # The watcher's own interval does the same two things a manual run does: one
+        # forced read of PSL, then a per-destination decision about writing, which is
+        # why the read and the apply are separate calls rather than one whole run.
+        self.assertIn("self.refresh_source(refresh_lxc_config=True)", service_source)
+        self.assertIn("self.auto_apply(config)", service_source)
         page = shell_page()
         self.assertIn("Refreshing PSL records…", page)
         self.assertIn('status.state==="busy"', page)
+
+    def test_each_plugin_runs_its_own_preview_and_apply(self):
+        page = shell_page()
+        # A plugin's Preview and Apply sit on that plugin's own page and name the
+        # plugin they belong to, so a run reviews and writes that destination alone,
+        # and the shell no longer carries a run button that spoke for every one.
+        self.assertNotIn('id="preview-now"', page)
+        self.assertNotIn('id="apply-now"', page)
+        self.assertNotIn("/api/preview", page)
+        self.assertNotIn("/api/apply", page)
+        self.assertIn("async function runDestination(key,kind,button)", page)
+        self.assertIn("const path=`/api/destinations/${encodeURIComponent(key)}/${kind}`;", page)
+        self.assertIn('preview.textContent=`Preview ${label}`', page)
+        self.assertIn('apply.textContent=`Apply ${label}`', page)
+        self.assertIn('runDestination(described.key,"preview",preview)', page)
+        self.assertIn('runDestination(described.key,"apply",apply)', page)
+        self.assertIn("runBox.append(preview,apply);", page)
 
     def test_the_shell_tracks_unsaved_settings_across_panels(self):
         page = shell_page()
@@ -223,27 +273,33 @@ class DashboardShellTests(unittest.TestCase):
         self.assertIn("function formState()", page)
         self.assertIn("panelSnapshots=snapshotPanels()", page)
 
-    def test_the_shell_owns_the_tab_strip_and_its_own_panel(self):
+    def test_every_plugin_gets_its_own_pages_and_tab_strip(self):
         page = shell_page()
-        # The shell opens with its own PSL tab; every destination adds one more, so
-        # the strip is drawn from what was mounted rather than from a fixed count.
-        self.assertIn('role="tablist"', page)
-        self.assertIn('id="panel-psl" role="tabpanel" aria-labelledby="tab-psl">', page)
-        self.assertIn('aria-controls="panel-psl"', page)
-        self.assertLess(page.index('id="panel-psl"'), page.index('id="pve-url"'))
+        # PSL is a page of its own with no tab strip; each plugin's tabs live in a
+        # strip on that plugin's own page, so no tab can be mistaken for another
+        # owner's. Tabs and panels are looked up by id, so the page has to be in the
+        # document before its first tab is selected.
+        self.assertIn("function destinationPage(described,index)", page)
+        self.assertIn('strip.setAttribute("role","tablist")', page)
+        self.assertIn("function wireTabStrip(strip)", page)
+        self.assertIn("function selectTab(tab)", page)
+        self.assertIn("function showPage(name,focus)", page)
         self.assertIn("function tabButtons()", page)
         self.assertIn("function showTab(name,focus)", page)
-        # Click and arrow keys are handled on the strip itself, so a tab a
-        # destination mounted works without the shell ever naming it.
-        self.assertIn('tabList.addEventListener("click",event=>{', page)
-        self.assertIn('tabList.addEventListener("keydown",event=>{', page)
+        self.assertIn('[data-host][data-destination="${described.key}"]', page)
+        self.assertLess(page.index("pages.append(built.page)"), page.index("selectTab(mountedTabs[0])"))
+        # Arrow keys and clicks are handled on each plugin's own strip.
+        self.assertIn('strip.addEventListener("click",event=>{', page)
+        self.assertIn('strip.addEventListener("keydown",event=>{', page)
         self.assertIn('"ArrowRight"?1:event.key==="ArrowLeft"?-1:0', page)
-        self.assertIn("tab.tabIndex=selected?0:-1", page)
-        # A closed panel must not hide an unsaved edit: the tab holding it is marked,
-        # and a mounted panel's tab is marked from the same snapshot the header uses.
+        self.assertIn("other.tabIndex=selected?0:-1", page)
+        # A closed page must not hide an unsaved edit: the tab holding it and the
+        # rail entry of the page it is on are both marked from the same snapshot.
         self.assertIn("function paintTabs(dirty)", page)
+        self.assertIn("function paintNav(dirty)", page)
         self.assertIn("panelSnapshots=snapshotPanels()", page)
         self.assertIn(".tab.dirty::after", page)
+        self.assertIn("location.hash", page)
 
     def test_the_shell_renders_the_run_status(self):
         page = shell_page()
@@ -587,6 +643,45 @@ class DestinationRouteTests(unittest.TestCase):
         )
         self.assertEqual(response.status, 400)
         self.assertIn("does not offer panel actions", response.read().decode("utf-8"))
+
+    def test_preview_and_apply_are_asked_for_at_the_destination_thats_asked(self):
+        # A plugin's own page asks for its own Preview or Apply, so the route names
+        # the destination and the verb, and the run is told to read PSL again so
+        # what it shows and writes is fresh rather than what another page last saw.
+        with mock.patch.object(self.service, "run_destination", autospec=True) as run_destination:
+            run_destination.return_value = self.service.get_status()
+            for verb, applying in (("preview", False), ("apply", True)):
+                with self.subTest(verb=verb):
+                    response = self._request(
+                        "POST",
+                        f"/api/destinations/{NPM_PLUGIN.key}/{verb}",
+                        json.dumps({}),
+                    )
+                    self.assertEqual(response.status, 200)
+                    self.assertIn("state", json.loads(response.read().decode("utf-8")))
+                    run_destination.assert_called_once_with(
+                        NPM_PLUGIN.key,
+                        apply_changes=applying,
+                        refresh_lxc_config=True,
+                    )
+                    run_destination.reset_mock()
+
+    def test_there_is_no_longer_a_run_of_the_whole_install_to_ask_for(self):
+        # Every destination runs from its own page now, so the routes that ran them
+        # all at once are gone rather than left reachable and unmentioned.
+        for path in ("/api/preview", "/api/apply"):
+            with self.subTest(path=path):
+                response = self._request("POST", path, json.dumps({}))
+                self.assertEqual(response.status, 404)
+
+    def test_an_unlisted_request_for_a_destination_is_refused_by_name(self):
+        response = self._request(
+            "POST",
+            f"/api/destinations/{NPM_PLUGIN.key}/reload",
+            json.dumps({}),
+        )
+        self.assertEqual(response.status, 404)
+        self.assertIn("Unknown destination request 'reload'", response.read().decode("utf-8"))
 
 
 class DashboardLoggingTests(unittest.TestCase):

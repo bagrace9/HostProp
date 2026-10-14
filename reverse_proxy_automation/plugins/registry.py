@@ -9,7 +9,7 @@ is added later is therefore indistinguishable from a shipped one.
 import logging
 from importlib import import_module, metadata
 
-from .base import PluginContext, destination_state
+from .base import PluginContext, destination_runner, destination_state
 
 
 LOGGER = logging.getLogger(__name__)
@@ -95,16 +95,22 @@ class PluginRegistry:
             merged.update(plugin.merge_config(existing, submitted))
         return merged
 
-    def validate(self, config, allow_incomplete=False):
-        """Let every destination check its own settings, naming the first problem."""
-        for plugin in self._plugins.values():
-            plugin.validate(config, allow_incomplete=allow_incomplete)
+    def validate(self, config, allow_incomplete=False, enabled=None):
+        """Let every destination check its own settings, naming the first problem.
 
-    def secret_fields(self, config):
-        """(description, value) for every secret any destination stores."""
+        ``enabled`` is an optional predicate on a plugin key: a destination that is
+        switched off is skipped, because its settings may be half done.
+        """
+        for plugin in self._plugins.values():
+            if enabled is None or enabled(plugin.key):
+                plugin.validate(config, allow_incomplete=allow_incomplete)
+
+    def secret_fields(self, config, enabled=None):
+        """(description, value) for every secret any enabled destination stores."""
         fields = []
         for plugin in self._plugins.values():
-            fields.extend(plugin.secret_fields(config))
+            if enabled is None or enabled(plugin.key):
+                fields.extend(plugin.secret_fields(config))
         return fields
 
     def public_config(self, config, environ=None):
@@ -116,8 +122,15 @@ class PluginRegistry:
 
     # --- the run and the page --------------------------------------------------
 
-    def adapters(self, config_store, state_path, lock, wake):
-        """Lend each destination its context, then return them as plan/apply adapters."""
+    def adapters(self, config_store, state_path, lock, wake, run=None,
+                 source_snapshot=None, refresh_source=None):
+        """Lend each destination its context, then return them as plan/apply adapters.
+
+        ``run`` is the core's way of running one destination, and is bound to each
+        plugin's own key here, so a plugin asks for itself without ever naming
+        itself. A registry built without a service is lent none of the three and
+        simply cannot run from a panel.
+        """
         for plugin in self._plugins.values():
             plugin.context(PluginContext(
                 config_store=config_store,
@@ -125,6 +138,9 @@ class PluginRegistry:
                 lock=lock,
                 wake=wake,
                 registry=self,
+                run=destination_runner(run, plugin.key),
+                source_snapshot=source_snapshot,
+                refresh_source=refresh_source,
             ))
         return self.plugins()
 

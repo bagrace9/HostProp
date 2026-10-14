@@ -200,18 +200,27 @@ class MultiInstanceRunTests(unittest.TestCase):
                 "poll_interval_seconds": 300,
             })
             called = threading.Event()
-            arguments = []
+            applied = threading.Event()
+            refreshes = []
 
-            def record_run(service, apply_changes=False, refresh_lxc_config=False):
-                arguments.append((apply_changes, refresh_lxc_config))
+            def record_refresh(service, refresh_lxc_config=False, wait=True):
+                refreshes.append(refresh_lxc_config)
                 called.set()
                 return {"state": "ok"}
 
-            with mock.patch.object(SyncService, "run_once", record_run):
+            def record_apply(service, config=None):
+                applied.set()
+                return {"state": "ok"}
+
+            with mock.patch.object(SyncService, "refresh_source", record_refresh), \
+                    mock.patch.object(SyncService, "auto_apply", record_apply):
                 service = SyncService(store, Path(directory) / "sync-state.json")
                 try:
                     self.assertTrue(called.wait(2), "watcher waited for its polling interval on startup")
-                    self.assertEqual(arguments, [(True, True)])
+                    self.assertTrue(applied.wait(2), "watcher did not apply after reading the source")
+                    # Its scheduled read refreshes the Web UI endpoints, so every
+                    # destination plans against addresses that were just detected.
+                    self.assertEqual(refreshes, [True])
                 finally:
                     service.stop()
 
@@ -223,14 +232,20 @@ class MultiInstanceRunTests(unittest.TestCase):
                 {"20": {"instance": "lab", "zone": "internal.example.net"}},
             )
             called = threading.Event()
+            applied = threading.Event()
             arguments = []
 
-            def record_run(apply_changes=False, refresh_lxc_config=False):
-                arguments.append((apply_changes, refresh_lxc_config))
+            def record_refresh(refresh_lxc_config=False, wait=True):
+                arguments.append(refresh_lxc_config)
                 called.set()
                 return {"state": "ok"}
 
-            service.run_once = record_run
+            def record_apply(config=None):
+                applied.set()
+                return {"state": "ok"}
+
+            service.refresh_source = record_refresh
+            service.auto_apply = record_apply
             store.save({
                 "watch_enabled": True,
                 "auto_apply": True,
@@ -239,7 +254,8 @@ class MultiInstanceRunTests(unittest.TestCase):
             service.wake_loop()
             try:
                 self.assertTrue(called.wait(2), "watcher did not start a scheduled run")
-                self.assertEqual(arguments, [(True, True)])
+                self.assertTrue(applied.wait(2), "watcher read the source but never applied")
+                self.assertEqual(arguments, [True])
             finally:
                 service.stop()
 
@@ -254,11 +270,15 @@ class MultiInstanceRunTests(unittest.TestCase):
             store.load = mock.Mock(side_effect=[OSError("temporary read failure"), config])
             called = threading.Event()
 
-            def record_run(service, apply_changes=False, refresh_lxc_config=False):
+            def record_refresh(service, refresh_lxc_config=False, wait=True):
                 called.set()
                 return {"state": "ok"}
 
-            with mock.patch.object(SyncService, "run_once", record_run), \
+            def record_apply(service, config=None):
+                return {"state": "ok"}
+
+            with mock.patch.object(SyncService, "refresh_source", record_refresh), \
+                    mock.patch.object(SyncService, "auto_apply", record_apply), \
                     mock.patch("reverse_proxy_automation.service.LOGGER.exception"):
                 service = SyncService(store, Path(directory) / "sync-state.json")
                 try:

@@ -244,7 +244,7 @@
     }
     .stat strong{font-size:23px;letter-spacing:-.035em}
     .stat span{font-size:9px;letter-spacing:.055em}
-    #preview-now,#apply-now{flex:1 1 auto}
+    .dest-run{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
     .icon-button{border-radius:8px}
 
     .table-wrap{
@@ -305,85 +305,113 @@
       .stats{gap:6px}
       .stat{padding:10px 7px}
       .stat span{font-size:8px}
-      #preview-now,#apply-now{flex:1 1 100%}
+      .dest-run{justify-content:flex-start}
       .toast{right:12px;bottom:12px}
     }@media(prefers-reduced-motion:reduce){
       *,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
     }
 
-    /* --- Destination plugins: which part of this page came from where ------- */
+    /* The destinations card: one row per destination, each row owning its own
+       name, panel file and mounted counts. The list stands on its own, so a
+       destination added later only adds a row. */
+    .destination{border-top:1px solid var(--line);margin-top:12px;padding-top:12px}
+    .destination:first-child{border-top:0;margin-top:0;padding-top:0}
+    .destination-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+    .destination .button{margin-top:9px}
 
-    /* The strip holds the shell's own tab beside the tabs a plugin mounted, so the
-       legend under it names the owner of each one: the app's own tab first, then a
-       line per plugin naming the tabs it brought. */
-    #tab-sources{margin:-12px 0 17px;padding:0}
-    .legend-owner{font-weight:650;color:var(--ink)}
-    .legend-tabs{color:var(--muted)}
-    .tag.plugin-tag{border:1px solid #cfe4d9;background:#eaf5ef;color:#236147}
-    .tag.core-tag{border:1px solid #dde5e1;background:#f1f4f2;color:#5c6c65}
-
-    /* A plugin's own sections - its tab panels and the cards it adds to the side
-       column - are captioned with the plugin that brought them, so the app's own
-       panel and an installed one are told apart. The words are read from the label
-       the shell recorded on the element, so this rule names no destination. */
-    .plugin-owned::before{
-      display:inline-block;
-      margin:0 0 11px;
-      padding:3px 10px;
-      border:1px solid #cfe4d9;
-      border-radius:999px;
-      background:#f3f9f6;
-      color:#2c6b52;
-      font-size:10px;
-      font-weight:700;
-      letter-spacing:.07em;
-      text-transform:uppercase;
-      content:"Plugin: " attr(data-plugin-label);
+    /* ---- shell: a rail that separates the source from each destination plugin ---- */
+    :root{--accent-green:#147553;--accent-blue:#2f6fa5;--accent-violet:#7a55a8;--accent-amber:#b07a1a}
+    [data-accent="green"]{--accent:var(--accent-green)}[data-accent="blue"]{--accent:var(--accent-blue)}
+    [data-accent="violet"]{--accent:var(--accent-violet)}[data-accent="amber"]{--accent:var(--accent-amber)}
+    .shell{display:grid;grid-template-columns:248px minmax(0,1fr);gap:26px;max-width:1280px;margin:26px auto 48px;padding:0 28px;align-items:start}
+    .rail{position:sticky;top:18px;display:grid;gap:18px;align-content:start}
+    .nav-group{display:grid;gap:6px}
+    .nav-label{font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);padding:0 12px}
+    .nav-label small{margin-left:6px;padding:1px 6px;border-radius:999px;background:#e3ebe6;color:#4d6258;font-size:9px;letter-spacing:.04em}
+    .nav-item{display:grid;gap:1px;text-align:left;width:100%;padding:9px 12px;border:1px solid transparent;border-left:4px solid var(--line);border-radius:10px;background:transparent;color:var(--ink);transition:background .12s,border-color .12s}
+    .nav-item:hover{background:#e9efeb}
+    .nav-item:focus-visible{outline:2px solid #3e9871;outline-offset:2px}
+    .nav-item[aria-current="page"]{background:#fff;border-color:var(--line);border-left-color:var(--accent,var(--green));box-shadow:var(--shadow)}
+    .destination-item{border-left-color:var(--accent,var(--line))}
+    .nav-title{display:flex;align-items:center;gap:8px;font-weight:650;font-size:14px}
+    .nav-sub{font-size:11px;color:var(--muted);padding-left:0}
+    .nav-dot{width:8px;height:8px;border-radius:50%;background:var(--accent,#8fa398);flex:none}
+    .nav-dot.dirty{background:#c08b1f;box-shadow:0 0 0 3px #f6efd9}
+    .nav-item.off .nav-title,.nav-item.off .nav-sub{opacity:.55}
+    .nav-item.off .nav-dot{background:#b6c0bb}
+    .nav-item.failed .nav-sub{color:var(--coral);font-weight:600}
+    .nav-hint{margin:4px 12px 0;font-size:11px;line-height:1.5;color:var(--muted)}
+    .content{display:grid;gap:18px;min-width:0}
+    .page{display:grid;gap:16px;min-width:0}
+    .page[hidden]{display:none}
+    .page-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}
+    .page-head h2{font-size:22px;letter-spacing:-.02em;margin:2px 0 4px}
+    .page-head p{margin:0;max-width:640px;font-size:13px;color:var(--muted)}
+    .kicker{font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--accent,var(--green))}
+    .dest-head{padding:18px 20px;border:1px solid var(--line);border-top:4px solid var(--accent,var(--green));border-radius:12px;background:#fff;box-shadow:var(--shadow)}
+    .dest-head code,.dest-meta code{font-family:Consolas,"Courier New",monospace;background:#edf1ee;padding:1px 6px;border-radius:5px;font-size:12px}
+    .source-head{padding:18px 20px;border:1px solid var(--line);border-top:4px solid #1d312d;border-radius:12px;background:#fff;box-shadow:var(--shadow)}
+    .source-head .kicker{color:#1d312d}
+    .enable-switch{display:flex;align-items:center;gap:10px;font-size:12px;font-weight:650;color:var(--muted);white-space:nowrap}
+    .enable-switch .switch:checked{background:var(--accent,var(--green))}
+    .dest-controls{display:flex;flex-direction:column;align-items:flex-end;gap:7px}
+    .auto-apply-hint{margin:0;max-width:250px;text-align:right;font-size:11px;line-height:1.5}
+    .auto-apply-hint[data-state="blocked"]{color:var(--gold)}
+    .dest-summary{margin:-6px 4px 0}
+    .destination-off{margin:0;border-left-color:#c9a64a;background:var(--gold-soft)}
+    .dest-page.off .dest-body{opacity:.55;filter:grayscale(.4)}
+    .dest-body{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:18px;align-items:start}
+    .dest-main{min-width:0}
+    .dest-side{display:grid;gap:18px;align-content:start}
+    .dest-page .tab[aria-selected="true"]{box-shadow:inset 0 3px 0 var(--accent,var(--green))}
+    .overview-grid{display:grid;grid-template-columns:minmax(280px,360px) minmax(0,1fr);gap:18px;align-items:start}
+    .run-card{position:sticky;top:18px}
+    .result-card{border:1px solid var(--line);border-left:4px solid var(--accent,var(--green));border-radius:10px;padding:14px 16px;margin-top:12px;background:#fbfcfb}
+    .result-card:first-of-type{margin-top:4px}
+    .result-card.off{opacity:.6}
+    .result-head{display:flex;align-items:center;gap:10px}
+    .result-head strong{font-size:15px}
+    .result-head .button{margin-left:auto}
+    .plugin-key{font-family:Consolas,"Courier New",monospace}
+    .button.small{padding:5px 10px;font-size:12px}
+    .result-card .status-meta{margin:6px 0 8px}
+    @media(max-width:1000px){
+      .overview-grid,.dest-body{grid-template-columns:1fr}
+      .run-card{position:static}
+    }
+    @media(max-width:860px){
+      .shell{grid-template-columns:1fr;padding:0 16px;margin-top:18px;gap:16px}
+      .rail{position:static;grid-auto-flow:row}
+      .nav-hint{display:none}
+      .page-head{flex-direction:column}
     }
 
-    /* A plugin's tabs carry the same accent in the strip itself, so the boundary
-       stays visible while one of them is open. */
-    .tab[data-destination]{box-shadow:inset 0 -2px 0 #b7ddc9}
-    .tab[data-destination][aria-selected="true"]{box-shadow:0 1px 4px #1b352b14,inset 0 -2px 0 #4ca57b}
-
-    /* One row per installed plugin in the sidebar card. */
-    .plugin-mark{
-      display:grid;
-      place-items:center;
-      width:21px;
-      height:21px;
-      flex:none;
-      border:1px solid #bfdccb;
-      border-radius:7px;
-      background:linear-gradient(160deg,#eaf5ef,#d5ebde);
-      color:#22624a;
-      font-size:11px;
-      font-weight:700;
-    }
-    .destination-name{display:flex;align-items:center;gap:8px;min-width:0}
-    .destination code{
-      padding:1px 5px;
-      border:1px solid #e2eae5;
-      border-radius:5px;
-      background:#f7faf8;
-      font-family:Consolas,"Courier New",monospace;
-      font-size:11.5px;
-    }
-    .plugin-chip-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
-    .plugin-chip-lead{
-      color:var(--muted);
-      font-size:10px;
-      letter-spacing:.06em;
-      text-transform:uppercase;
-    }
-    .plugin-chip{
-      padding:3px 9px;
-      border:1px solid #dbe6e0;
-      border-radius:999px;
-      background:#f7faf8;
-      color:#3e564b;
-      font-size:11px;
-    }
+    /* ---- PSL is the primary stage; plugins hang off it ---- */
+    .nav-label small.req{background:#1d312d;color:#fff}
+    .source-item{border-left-color:#1d312d;background:#fff;border-color:var(--line)}
+    .source-item .nav-title{font-weight:700}
+    .source-item[aria-current="page"]{border-left-color:#1d312d}
+    .flow{display:grid;grid-template-columns:minmax(210px,300px) 64px minmax(0,1fr);align-items:stretch}
+    .flow-source{display:grid;gap:6px;align-content:center;background:#1d312d;color:#fff;border-radius:14px;padding:18px 20px;box-shadow:var(--shadow)}
+    .flow-source .kicker{color:#9fd0b8}
+    .flow-source strong{font-size:19px;letter-spacing:-.01em}
+    .flow-count{font-size:13px;color:#c8dad2}
+    .flow-source[data-state="error"] .flow-count{color:#f2b6a8}
+    .flow-source .button.small{justify-self:start;margin-top:4px}
+    .flow-arrow{display:grid;place-items:center}
+    .flow-arrow span{position:relative;width:100%;height:2px;background:linear-gradient(90deg,#1d312d,#8fa398)}
+    .flow-arrow span::after{content:"";position:absolute;right:-1px;top:-5px;border-left:9px solid #8fa398;border-top:6px solid transparent;border-bottom:6px solid transparent}
+    .flow-targets{display:grid;gap:8px;align-content:center;border:1.5px dashed #b9c8c0;border-radius:14px;padding:14px 16px;background:#fbfcfb}
+    .flow-targets .kicker{color:var(--muted)}
+    .flow-plugins{display:flex;flex-wrap:wrap;gap:10px}
+    .flow-plugin{display:grid;gap:2px;text-align:left;min-width:170px;padding:10px 14px;background:#fff;border:1px solid var(--line);border-left:4px solid var(--accent,var(--green));border-radius:10px;color:var(--ink)}
+    .flow-plugin:hover{background:#f3f8f5}
+    .flow-plugin strong{font-size:14px}
+    .flow-plugin span{font-size:11px;color:var(--muted)}
+    .flow-empty{margin:0;font-size:13px;color:var(--muted)}
+    .dest-main{overflow-x:auto}
+    @media(max-width:1180px){.dest-body{grid-template-columns:1fr}}
+    @media(max-width:860px){.flow{grid-template-columns:1fr}.flow-arrow{height:34px}.flow-arrow span{width:2px;height:100%;background:linear-gradient(180deg,#1d312d,#8fa398)}.flow-arrow span::after{right:auto;top:auto;bottom:-1px;left:-5px;border-left:6px solid transparent;border-right:6px solid transparent;border-top:9px solid #8fa398;border-bottom:0}}
   </style>
 </head>
 <body>
@@ -391,17 +419,56 @@
     <div><h1>Proxy Host Automation</h1><p>Guests from PVE Scripts Local, carried to every destination plugin this install serves</p></div>
     <div class="badges"><span class="unsaved-chip" id="unsaved" hidden>Unsaved changes</span><div class="system-badge" id="destination-badge" title="Every destination plugin this install mounts a panel for">Destination plugins: –</div></div>
   </header>
-  <div class="layout">
-    <main class="main">
-      <section class="panel">
-        <div class="tabs" role="tablist" aria-label="Dashboard sections">
-          <button class="tab" type="button" role="tab" id="tab-psl" data-tab="psl" aria-controls="panel-psl" aria-selected="true">PSL</button>
-          <div data-plugin-host="tabs" style="display:contents"></div>
+  <div class="shell">
+    <nav class="rail" id="rail" aria-label="Dashboard">
+      <button class="nav-item" type="button" data-nav="overview" aria-current="page"><span class="nav-title">Overview</span><span class="nav-sub">Runs and results across every plugin</span></button>
+      <div class="nav-group">
+        <span class="nav-label">Source <small class="req">required</small></span>
+        <button class="nav-item source-item" type="button" data-nav="psl" aria-current="false"><span class="nav-title"><span class="nav-dot" id="nav-dot-psl"></span>PVE Scripts Local</span><span class="nav-sub">Built in · every guest starts here</span></button>
+      </div>
+      <div class="nav-group" id="destination-card">
+        <span class="nav-label">Destination plugins <small>optional</small></span>
+        <div id="destination-list"><p class="nav-hint">Asking the dashboard which destination plugins are installed…</p></div>
+        <p class="nav-hint">PSL feeds every plugin below. Each plugin is installed separately, has its own settings and page, and can be switched off without touching PSL.</p>
+      </div>
+    </nav>
+    <div class="content">
+      <div class="note plaintext-warning" id="plaintext-warning" hidden></div>
+      <section class="page" id="page-overview" data-page="overview" aria-label="Overview">
+        <section class="flow" aria-label="How guests flow through this install">
+          <div class="flow-source">
+            <span class="kicker">Source · required</span>
+            <strong>PVE Scripts Local</strong>
+            <span class="flow-count" id="flow-guests">Waiting for the first read</span>
+            <button type="button" class="button secondary small" data-goto="psl">Source settings</button>
+          </div>
+          <div class="flow-arrow" aria-hidden="true"><span></span></div>
+          <div class="flow-targets">
+            <span class="kicker">Destination plugins · optional</span>
+            <div class="flow-plugins" id="flow-plugins"><p class="empty">Asking which destination plugins are installed…</p></div>
+          </div>
+        </section>
+        <div class="overview-grid">
+      <section class="panel run-card">
+        <h2>Run</h2>
+        <div class="status-line"><span class="status-dot" id="status-dot"></span><span id="status-message">Loading status…</span></div>
+        <p class="status-meta" id="status-meta">Waiting for dashboard.</p>
+        <div class="stats"><div class="stat"><strong id="guest-count">–</strong><span>PSL guests</span></div><div class="stat"><strong id="planned-count">–</strong><span>Planned</span></div><div class="stat"><strong id="attention-count">–</strong><span>Attention</span></div></div>
+        <div class="switch-row"><div><strong>Watch PSL</strong><span>Poll for guest and port changes.</span></div><input class="switch" type="checkbox" id="watch-enabled" aria-label="Watch PSL: poll for guest and port changes"></div>
+        <div class="switch-row"><div><strong>Automatically apply</strong><span>When off, the watcher reads PSL and writes nothing; each plugin's own page still applies on demand.</span></div><input class="switch" type="checkbox" id="auto-apply" aria-label="Automatically apply changes the watcher finds"></div>
+        <p class="status-meta">Preview and Apply live on each plugin's own page, so one plugin's run cannot review or write another's.</p>
+      </section>
+          <section class="panel results-card">
+            <h2>Results by destination</h2>
+            <p class="status-meta">Every destination plans and applies on its own, so one that fails does not hide the others.</p>
+            <div id="results-by-destination"><p class="empty">Preview a plugin from its own page to see what it would change.</p></div>
+          </section>
         </div>
-        <p class="legend" id="tab-sources"><span class="legend-item">Reading which destination plugins are installed…</span></p>
-        <div class="note plaintext-warning" id="plaintext-warning" hidden></div>
-        <div class="tab-panel" id="panel-psl" role="tabpanel" aria-labelledby="tab-psl">
-          <div class="panel-head"><div><h2>PVE Scripts Local</h2><p>The installed guests, their VLAN tags and their web UI ports are read from here.</p></div><span class="tag core-tag">built in</span></div>
+      </section>
+      <section class="page" id="page-psl" data-page="psl" aria-label="PVE Scripts Local" hidden>
+        <div class="page-head source-head"><div><span class="kicker">Source</span><h2>PVE Scripts Local</h2><p>The one required part. Guests, their VLAN tags and their web UI ports are read from here, then handed to every enabled destination.</p></div></div>
+        <section class="panel">
+        <div class="panel-body" id="panel-psl" data-snapshot>
           <div class="note">The saved password is write-only in this page: leaving it blank keeps the value this machine already has, and it may instead be an environment reference such as <code>env:PVE_LOCAL_PASSWORD</code>, which is read from the dashboard's environment and never stored here.</div>
           <div class="field-grid">
             <div class="field full"><label for="pve-url">PVE Scripts Local URL</label><input id="pve-url"></div>
@@ -413,26 +480,15 @@
           <div class="switch-row"><div><strong>PSL certificate is self-signed</strong><span>Turn on when the PSL https:// URL uses a certificate this machine does not trust.</span></div><input class="switch" type="checkbox" id="pve-insecure" aria-label="PSL certificate is self-signed: skip the TLS certificate check"></div>
           <div class="actions"><button class="button" id="save-config">Save PSL settings</button><button class="button secondary" data-test="pve">Test PSL</button></div>
         </div>
+        </section>
+      </section>
+      <div id="destination-pages"></div>
+      <div id="plugin-staging" hidden>
+        <div data-plugin-host="tabs" style="display:contents"></div>
         <div data-plugin-host="panels" style="display:contents"></div>
-      </section>
-    </main>
-    <aside class="side">
-      <section class="panel">
-        <h2>Watcher status</h2>
-        <div class="status-line"><span class="status-dot" id="status-dot"></span><span id="status-message">Loading status…</span></div>
-        <p class="status-meta" id="status-meta">Waiting for dashboard.</p>
-        <div class="stats"><div class="stat"><strong id="guest-count">–</strong><span>PSL guests</span></div><div class="stat"><strong id="planned-count">–</strong><span>Planned</span></div><div class="stat"><strong id="attention-count">–</strong><span>Attention</span></div></div>
-        <div class="switch-row"><div><strong>Watch PSL</strong><span>Poll for guest and port changes.</span></div><input class="switch" type="checkbox" id="watch-enabled" aria-label="Watch PSL: poll for guest and port changes"></div>
-        <div class="switch-row"><div><strong>Automatically apply</strong><span>When off, watcher only previews changes.</span></div><input class="switch" type="checkbox" id="auto-apply" aria-label="Automatically apply changes the watcher finds"></div>
-        <div class="actions"><button class="button secondary" id="preview-now">Preview now</button><button class="button warn" id="apply-now">Apply now</button></div>
-      </section>
-      <section class="panel" id="destination-card">
-        <h2>Destination plugins</h2>
-        <p class="status-meta">This page is a shell plus one plugin per destination. The shell ships the PSL tab and the watcher; a destination plugin arrives as its own package and brings its own tabs, panel file, settings and actions, which the dashboard serves without reading them. Every section a plugin contributed is captioned with the plugin that brought it.</p>
-        <div id="destination-list"><p class="empty">Asking the dashboard which destination plugins are installed…</p></div>
-      </section>
-      <div data-plugin-host="side" style="display:contents"></div>
-    </aside>
+        <div data-plugin-host="side" style="display:contents"></div>
+      </div>
+    </div>
   </div>
   <div class="toast" id="toast" role="status"></div>
   <script>
@@ -456,16 +512,19 @@
     function secretEnvReference(value){const text=(value||"").trim();return text.slice(0,4).toLowerCase()==="env:"?text.slice(4).trim():""}
     function paintSecretInput(input){const typed=secretEnvReference(input.value);const saved=input.dataset.secretEnv||"";const configured=input.dataset.secretConfigured==="1";input.type=typed?"text":"password";input.placeholder=typed?"Environment variable reference":saved?(configured?`From ${saved}`:`${saved} is not set`):(configured?"Saved \u00b7 blank keeps it":"Not configured")}
     function secretField(input,envName,configured){input.dataset.secretEnv=envName||"";input.dataset.secretConfigured=configured?"1":"0";input.title="Type the password, or env:VAR_NAME to read it from the dashboard's environment.";if(!input.dataset.secretWired){input.dataset.secretWired="1";input.addEventListener("input",()=>paintSecretInput(input))}paintSecretInput(input);return input}
-    function renderStatus(status){$("status-message").textContent=status.message||"No status available";$("status-dot").className=`status-dot ${status.state||""}`;$("guest-count").textContent=status.guest_count??"–";$("planned-count").textContent=(status.planned||[]).filter(row=>row.status.startsWith("DRY-")||row.status==="CREATE"||row.status==="UPDATE"||row.status==="DELETE").length;$("attention-count").textContent=(status.skipped||[]).length;const time=status.last_check?new Date(status.last_check).toLocaleString():"Not checked yet";const applied=status.last_apply?` · Last applied ${new Date(status.last_apply).toLocaleString()}`:"";const timings=status.timings||{};const timingSummary=Number.isFinite(timings.psl_read_seconds)?` · PSL ${timings.psl_read_seconds.toFixed(2)}s / ${timings.source_records} records · planning ${timings.planning_seconds.toFixed(2)}s`:"";$("status-meta").textContent=`Last check: ${time}${applied}${timingSummary}`;for(const destination of destinations){if(destination.status)destination.status(status)}}
+    function renderStatus(status){$("status-message").textContent=status.message||"No status available";$("status-dot").className=`status-dot ${status.state||""}`;$("guest-count").textContent=status.guest_count??"–";$("planned-count").textContent=(status.planned||[]).filter(row=>row.status.startsWith("DRY-")||row.status==="CREATE"||row.status==="UPDATE"||row.status==="DELETE").length;$("attention-count").textContent=(status.skipped||[]).length;const time=status.last_check?new Date(status.last_check).toLocaleString():"Not checked yet";const applied=status.last_apply?` · Last applied ${new Date(status.last_apply).toLocaleString()}`:"";const timings=status.timings||{};const timingSummary=Number.isFinite(timings.psl_read_seconds)?` · PSL ${timings.psl_read_seconds.toFixed(2)}s / ${timings.source_records} records · planning ${timings.planning_seconds.toFixed(2)}s`:"";$("status-meta").textContent=`Last check: ${time}${applied}${timingSummary}`;renderResults(status);paintDestinationState(status);paintFlow(status);for(const destination of destinations){if(destination.status)destination.status(status)}}
     function paintPlaintextWarning(config){const node=$("plaintext-warning");if(!node)return;const fields=config.plaintext_secrets||[];if(!fields.length){node.hidden=true;node.textContent="";return}node.hidden=false;node.textContent=`${fields.join("; ")} ${fields.length===1?"is":"are"} saved as plain text in this machine's settings file. Clear the field and type env:VAR_NAME instead to read the value from the dashboard's environment and keep it out of the file.`}
-    function applyConfig(config){for(const [key,id] of Object.entries(fields))$(id).value=config[key]??"";secretField($("pve-pass"),config.pve_local_password_env||"",Boolean(config.pve_local_password_configured));$("watch-enabled").checked=Boolean(config.watch_enabled);$("auto-apply").checked=Boolean(config.auto_apply);$("pve-insecure").checked=config.pve_local_verify_tls===false;for(const destination of destinations){if(destination.load)destination.load(config)}paintPlaintextWarning(config);takeSnapshot()}
+    function applyConfig(config){for(const [key,id] of Object.entries(fields))$(id).value=config[key]??"";secretField($("pve-pass"),config.pve_local_password_env||"",Boolean(config.pve_local_password_configured));$("watch-enabled").checked=Boolean(config.watch_enabled);$("auto-apply").checked=Boolean(config.auto_apply);$("pve-insecure").checked=config.pve_local_verify_tls===false;for(const destination of destinations){if(destination.load)destination.load(config)}paintEnabled(config);paintPlaintextWarning(config);paintAutoApply(config);takeSnapshot()}
     async function loadConfig(){applyConfig(await api("/api/config"))}
-    function configPayload(){const config={};for(const [key,id]of Object.entries(fields))config[key]=$(id).value;config.poll_interval_seconds=config.poll_interval_seconds===""?null:Number(config.poll_interval_seconds);for(const destination of destinations)Object.assign(config,destination.collect?destination.collect():{});config.watch_enabled=$("watch-enabled").checked;config.auto_apply=$("auto-apply").checked;config.pve_local_verify_tls=!$("pve-insecure").checked;config.pve_local_password=$("pve-pass").value;return config}
+    function configPayload(){const config={};for(const [key,id]of Object.entries(fields))config[key]=$(id).value;config.poll_interval_seconds=config.poll_interval_seconds===""?null:Number(config.poll_interval_seconds);for(const destination of destinations)Object.assign(config,destination.collect?destination.collect():{});config.watch_enabled=$("watch-enabled").checked;config.auto_apply=$("auto-apply").checked;config.pve_local_verify_tls=!$("pve-insecure").checked;config.pve_local_password=$("pve-pass").value;config.destinations_enabled=collectEnabled();config.destinations_auto_apply=collectAutoApply();return config}
     async function saveConfig(){const saved=await api("/api/config",configPayload());applyConfig(saved.config);toast("Configuration saved on this machine.");await refreshStatus()}
     async function refreshStatus(){renderStatus(await api("/api/status"))}
-    async function run(path){const button=path==="/api/apply"?$("apply-now"):$("preview-now");const verb=path==="/api/apply"?"Apply":"Preview";const original=button.textContent;button.disabled=true;button.textContent="Refreshing PSL records…";try{await saveConfig();toast(`${verb} started; refreshing PSL records and detecting current endpoints.`);const status=await api(path,{});renderStatus(status);await refreshDestinations();if(status.state==="busy")toast(status.message,"error");else if(status.state==="error")toast(`${verb} failed: ${status.message||"see the status line above"}`,"error");else toast(`${verb} completed.`)}catch(error){toast(error.message,"error")}finally{button.disabled=false;button.textContent=original}}
-    $("save-config").onclick=()=>saveConfig().catch(error=>toast(error.message,"error"));$("preview-now").onclick=()=>run("/api/preview");$("apply-now").onclick=()=>{if(confirm("Apply the current plan to every destination? Only what this app created may be updated or deleted; what you adopted is updated but never deleted, and anything else is left untouched."))run("/api/apply")};
-    $("watch-enabled").onchange=()=>saveConfig().catch(error=>toast(error.message,"error"));$("auto-apply").onchange=()=>saveConfig().catch(error=>toast(error.message,"error"));$("pve-insecure").onchange=()=>saveConfig().catch(error=>toast(error.message,"error"));
+    // Preview and Apply belong to the plugin whose page was asked: each button runs
+    // that destination alone, reads PSL again and writes only that destination's rows,
+    // so one plugin's failed run cannot review or write another's.
+    async function runDestination(key,kind,button){const verb=kind==="apply"?"Apply":"Preview";const label=destinationLabel(destinationList.find(described=>described.key===key)||{key});const path=`/api/destinations/${encodeURIComponent(key)}/${kind}`;const original=button.textContent;button.disabled=true;button.textContent="Refreshing PSL records…";try{await saveConfig();toast(`${verb} ${label} started; refreshing PSL records and detecting current endpoints.`);const status=await api(path,{});renderStatus(status);await refreshDestinations();if(status.state==="busy")toast(status.message,"error");else if(status.state==="error")toast(`${verb} ${label} failed: ${status.message||"see the status line above"}`,"error");else toast(`${verb} ${label} completed.`)}catch(error){toast(error.message,"error")}finally{button.disabled=false;button.textContent=original}}
+    $("save-config").onclick=()=>saveConfig().catch(error=>toast(error.message,"error"));
+    $("watch-enabled").onchange=()=>saveConfig().catch(error=>toast(error.message,"error"));$("auto-apply").onchange=()=>{paintAutoApplyHints();saveConfig().catch(error=>toast(error.message,"error"))};$("pve-insecure").onchange=()=>saveConfig().catch(error=>toast(error.message,"error"));
     function takeSnapshot(){try{formSnapshot=JSON.stringify(configPayload());panelSnapshots=snapshotPanels()}catch(error){formSnapshot=null;panelSnapshots=null}paintDirty()}
     function formState(){try{return {dirty:JSON.stringify(configPayload())!==formSnapshot,error:""}}catch(error){return {dirty:true,error:error.message}}}
     function paintDirty(){const state=formState();const chip=$("unsaved");if(!chip)return;chip.hidden=!state.dirty;chip.title=state.error||"Settings in this page are not saved on this machine yet";paintTabs(state.dirty)}
@@ -476,12 +535,27 @@
     function tabButtons(){return [...document.querySelectorAll(".tab")]}
     function fieldValue(node){return node.type==="checkbox"?String(node.checked):node.value}
     function panelSignature(panel){return [...panel.querySelectorAll("input,textarea,select")].map(fieldValue).join("\u0001")}
-    function snapshotPanels(){const snapshots={};for(const panel of document.querySelectorAll("[role=tabpanel]"))snapshots[panel.id]=panelSignature(panel);return snapshots}
-    function paintTabs(dirty){for(const tab of tabButtons()){const panel=$(tab.getAttribute("aria-controls"));tab.classList.toggle("dirty",Boolean(dirty&&panel&&panelSnapshots&&panelSnapshots[panel.id]!==panelSignature(panel)))}}
-    function showTab(name,focus){for(const tab of tabButtons()){const selected=tab.dataset.tab===name;tab.setAttribute("aria-selected",selected?"true":"false");tab.tabIndex=selected?0:-1;$(tab.getAttribute("aria-controls")).hidden=!selected;if(selected&&focus)tab.focus()}}
-    const tabList=document.querySelector(".tabs");
-    tabList.addEventListener("click",event=>{const tab=event.target.closest(".tab");if(tab)showTab(tab.dataset.tab)});
-    tabList.addEventListener("keydown",event=>{if(!event.target.closest(".tab"))return;const tabs=tabButtons();const step=event.key==="ArrowRight"?1:event.key==="ArrowLeft"?-1:0;const target=step?tabs[(tabs.indexOf(event.target)+step+tabs.length)%tabs.length]:event.key==="Home"?tabs[0]:event.key==="End"?tabs[tabs.length-1]:null;if(!target)return;event.preventDefault();showTab(target.dataset.tab,true)});
+    function snapshotPanels(){const snapshots={};for(const panel of document.querySelectorAll("[role=tabpanel],[data-snapshot]"))snapshots[panel.id]=panelSignature(panel);return snapshots}
+    function paintTabs(dirty){for(const tab of tabButtons()){const panel=$(tab.getAttribute("aria-controls"));tab.classList.toggle("dirty",Boolean(dirty&&panel&&panelSnapshots&&panelSnapshots[panel.id]!==panelSignature(panel)))}paintNav(dirty)}
+    // The rail says which page holds an unsaved edit: the source's settings, or any tab of a destination.
+    function paintNav(dirty){const source=$("panel-psl");const dot=$("nav-dot-psl");if(dot)dot.classList.toggle("dirty",Boolean(dirty&&source&&panelSnapshots&&panelSnapshots["panel-psl"]!==panelSignature(source)));for(const item of document.querySelectorAll(".nav-item[data-destination]")){const page=$(`page-dest-${item.dataset.destination}`);const marker=item.querySelector(".nav-dot");if(marker)marker.classList.toggle("dirty",Boolean(dirty&&page&&page.querySelector(".tab.dirty")))}}
+    function showPage(name,focus){
+      const known=[...document.querySelectorAll(".page")].some(page=>page.dataset.page===name);
+      if(!known)name="overview";
+      for(const page of document.querySelectorAll(".page"))page.hidden=page.dataset.page!==name;
+      for(const item of document.querySelectorAll(".nav-item"))item.setAttribute("aria-current",item.dataset.nav===name?"page":"false");
+      if(history.replaceState&&location.hash!==`#${name}`)history.replaceState(null,"",`#${name}`);
+      if(focus){const heading=document.querySelector(`.page[data-page="${name}"] h2`);if(heading){heading.tabIndex=-1;heading.focus()}}
+    }
+    function selectTab(tab){const strip=tab.closest(".tabs");for(const other of strip.querySelectorAll(".tab")){const selected=other===tab;other.setAttribute("aria-selected",selected?"true":"false");other.tabIndex=selected?0:-1;const panel=$(other.getAttribute("aria-controls"));if(panel)panel.hidden=!selected}}
+    function showTab(name,focus){if(name==="psl"){showPage("psl",focus);return}const tab=tabButtons().find(item=>item.dataset.tab===name);if(!tab)return;selectTab(tab);const page=tab.closest(".page");if(page)showPage(page.dataset.page);if(focus)tab.focus()}
+    function wireTabStrip(strip){
+      strip.addEventListener("click",event=>{const tab=event.target.closest(".tab");if(tab)selectTab(tab)});
+      strip.addEventListener("keydown",event=>{if(!event.target.closest(".tab"))return;const tabs=[...strip.querySelectorAll(".tab")];const step=event.key==="ArrowRight"?1:event.key==="ArrowLeft"?-1:0;const target=step?tabs[(tabs.indexOf(event.target)+step+tabs.length)%tabs.length]:event.key==="Home"?tabs[0]:event.key==="End"?tabs[tabs.length-1]:null;if(!target)return;event.preventDefault();selectTab(target);target.focus()})
+    }
+    $("rail").addEventListener("click",event=>{const item=event.target.closest(".nav-item");if(item)showPage(item.dataset.nav,true)});
+    document.addEventListener("click",event=>{const go=event.target.closest("[data-goto]");if(go)showPage(go.dataset.goto,true)});
+    window.addEventListener("hashchange",()=>showPage(location.hash.slice(1)));
     // A destination is mounted, not written into this page: the shell asks the
     // core which destinations exist, loads the panel file each one names,
     // mounts the markup it registered and then asks it for the settings the
@@ -490,40 +564,6 @@
     const destinations=[];
     const registered={};
     function pluginHost(name){return document.querySelector(`[data-plugin-host="${name}"]`)}
-    // Everything a destination mounted belongs to that plugin, so the shell marks
-    // the section with the plugin's own label. The caption a reader sees is drawn
-    // by a style rule reading that attribute, so the shell never writes words a
-    // destination owns into an element it does not own.
-    function markPluginSurface(node,descriptor){
-      node.classList.add("plugin-owned");
-      node.dataset.destination=descriptor.key;
-      node.dataset.pluginLabel=descriptor.label||descriptor.key
-    }
-    // One legend entry: "built in" or "plugin", then who owns it and what they brought.
-    function legendItem(tagClass,tagText,owner,detail){
-      const item=document.createElement("span");item.className="legend-item";
-      const tag=document.createElement("span");tag.className=`tag ${tagClass}`;tag.textContent=tagText;
-      const name=document.createElement("span");name.className="legend-owner";name.textContent=owner;
-      item.append(tag,name);
-      if(detail){const note=document.createElement("span");note.className="legend-tabs";note.textContent=detail;item.append(note)}
-      return item
-    }
-    // The strip holds the shell's own tab beside the tabs a plugin mounted, so the
-    // legend under it says which is which: the app's own first, then one entry per
-    // plugin naming the tabs it brought. Nothing here knows a destination's name.
-    function renderTabSources(listed){
-      const legend=$("tab-sources");
-      if(!legend)return;
-      legend.replaceChildren();
-      legend.append(legendItem("core-tag","built in","PSL and the watcher","shipped with the app"));
-      if(!listed.length){legend.append(legendItem("plugin-tag","plugin","none installed","every tab above is the app's own"));return}
-      for(const described of listed){
-        const mounted=registered[described.key]||{};
-        const labels=mounted.tabLabels||[];
-        const detail=labels.length?labels.join(", "):described.panel?"panel not mounted":"no panel file";
-        legend.append(legendItem("plugin-tag","plugin",described.label||described.key,detail))
-      }
-    }
     function registerDestination(descriptor){
       if(!descriptor||!descriptor.key)throw new Error("A destination panel must register a key");
       registered[descriptor.key]=descriptor;
@@ -535,25 +575,14 @@
       // The shell records which destination mounted which section and which tab
       // in the shell's own tab strip, so the page can show who owns a strip entry
       // without knowing any destination's own words.
-      descriptor.tabs=[];descriptor.tabLabels=[];
+      descriptor.tabs=[];
       for(const chunk of [...template.content.children]){
         const host=pluginHost(chunk.dataset.host||"");
         if(!host){console.warn(`Destination ${descriptor.key} declares an unknown panel section: ${chunk.dataset.host}`);continue}
         chunk.dataset.destination=descriptor.key;
         for(const tab of chunk.querySelectorAll(".tab[data-tab]")){
           tab.dataset.destination=descriptor.key;
-          tab.title=`From the ${descriptor.label||descriptor.key} destination plugin`;
-          if(tab.getAttribute("aria-controls")){descriptor.tabs.push(tab.dataset.tab);descriptor.tabLabels.push(tab.textContent.trim()||tab.dataset.tab)}
-        }
-        // A destination's own sections are captioned with the plugin that brought
-        // them, so the app's panel and an installed one are told apart. A chunk that
-        // is only a carrier for the sections inside it - declared display:contents,
-        // or a plain div with no id or class of its own - has no box, so the caption
-        // goes on the sections it holds. The tab strip is the shell's, so those tabs
-        // keep the legend under the strip as their owner.
-        if(chunk.dataset.host!=="tabs"){
-          const carrier=chunk.style.display==="contents"||(chunk.tagName==="DIV"&&!chunk.id&&!String(chunk.className||"").trim());
-          for(const surface of (carrier?[...chunk.children]:[chunk]))markPluginSurface(surface,descriptor)
+          if(tab.getAttribute("aria-controls"))descriptor.tabs.push(tab.dataset.tab)
         }
         host.appendChild(chunk)
       }
@@ -561,43 +590,179 @@
       destinations.push(descriptor);
       if(descriptor.start)descriptor.start()
     }
-    // The destinations card is the shell's own view of the seam: one row per
-    // installed plugin, naming what the core reported, the panel file it brought
-    // and the tabs and actions it mounted, so a plugin added later appears here
-    // with no shell change.
-    function destinationRow(described){
-      const mounted=registered[described.key]||{};
-      const tabs=mounted.tabs||[];
-      const labels=mounted.tabLabels||[];
-      const actions=(described.admin||[]).length;
-      const label=described.label||described.key;
-      const row=document.createElement("div");row.className="destination";row.dataset.destination=described.key;
-      const head=document.createElement("div");head.className="destination-head";
-      const group=document.createElement("div");group.className="destination-name";
-      const mark=document.createElement("span");mark.className="plugin-mark";mark.setAttribute("aria-hidden","true");mark.textContent=label.slice(0,1).toUpperCase();
-      const name=document.createElement("strong");name.textContent=label;
-      const tag=document.createElement("span");tag.className="tag plugin-tag";tag.textContent="plugin";
-      group.append(mark,name,tag);
-      const key=document.createElement("span");key.className="tag destination-key";key.textContent=described.key;
-      head.append(group,key);
-      const meta=document.createElement("p");meta.className="status-meta";
-      const file=document.createElement("code");file.textContent=described.panel||"no panel file";
-      const state=registered[described.key]?"mounted":"not mounted";
-      meta.append(file,document.createTextNode(described.panel?` · ${actions} action${actions===1?"":"s"} · ${state}`:" · served by the core"));
-      row.append(head,meta);
-      if(labels.length){const chips=document.createElement("div");chips.className="plugin-chip-row";const lead=document.createElement("span");lead.className="plugin-chip-lead";lead.textContent="tabs";chips.append(lead);for(const item of labels){const chip=document.createElement("span");chip.className="plugin-chip";chip.textContent=item;chips.append(chip)}row.append(chips)}
-      if(tabs.length){const jump=document.createElement("button");jump.type="button";jump.className="button secondary";jump.textContent=`Open ${label}`;jump.onclick=()=>showTab(tabs[0],true);row.append(jump)}
-      return row
+    // Each destination is a plugin and gets its own rail entry and its own page: its
+    // name, an enable switch, and the tabs and cards its panel registered. The shell
+    // only decides where a chunk goes; it never reads what a destination calls things.
+    const ACCENTS=["green","blue","violet","amber"];
+    let destinationList=[];
+    const destinationLabel=(described)=>described.label||described.key;
+    function navItem(described,index){
+      const item=document.createElement("button");item.type="button";item.className="nav-item destination-item";
+      item.dataset.nav=`dest-${described.key}`;item.dataset.destination=described.key;item.dataset.accent=ACCENTS[index%ACCENTS.length];item.setAttribute("aria-current","false");
+      const title=document.createElement("span");title.className="nav-title";
+      const dot=document.createElement("span");dot.className="nav-dot";
+      title.append(dot,destinationLabel(described));
+      const sub=document.createElement("span");sub.className="nav-sub";sub.dataset.navState=described.key;sub.textContent=`plugin · ${described.key}`;
+      item.append(title,sub);return item
+    }
+    function destinationPage(described,index){
+      const label=destinationLabel(described);
+      const page=document.createElement("section");page.className="page dest-page";page.id=`page-dest-${described.key}`;page.dataset.page=`dest-${described.key}`;page.dataset.destination=described.key;page.dataset.accent=ACCENTS[index%ACCENTS.length];page.hidden=true;page.setAttribute("aria-label",label);
+      const head=document.createElement("div");head.className="page-head dest-head";
+      const text=document.createElement("div");
+      const kicker=document.createElement("span");kicker.className="kicker";kicker.textContent="Destination plugin";
+      const title=document.createElement("h2");title.textContent=label;
+      const meta=document.createElement("p");meta.className="dest-meta";const code=document.createElement("code");code.textContent=described.key;
+      meta.append("Plugin ",code," \u00b7 receives the guests PSL reports, then plans and applies on its own");
+      text.append(kicker,title,meta);
+      const controls=document.createElement("div");controls.className="dest-controls";
+      const control=document.createElement("label");control.className="enable-switch";
+      const state=document.createElement("span");state.className="enable-label";state.textContent="Enabled";
+      const toggle=document.createElement("input");toggle.type="checkbox";toggle.className="switch";toggle.id=`enabled-${described.key}`;toggle.checked=true;toggle.dataset.destinationSwitch=described.key;toggle.setAttribute("aria-label",`${label} is enabled: include it in runs`);
+      toggle.onchange=()=>{paintEnabledState(described.key,toggle.checked);saveConfig().catch(error=>{toast(error.message,"error");loadConfig()})};
+      control.append(state,toggle);
+      // The watcher's writes are gated twice: the master switch on the Run card and
+      // this plugin's own entry. Left off, the watcher leaves this plugin out of its
+      // run altogether - Preview and Apply on this page are then how it is run.
+      const auto=document.createElement("label");auto.className="enable-switch";
+      const autoState=document.createElement("span");autoState.className="auto-apply-label";autoState.textContent="Apply automatically";
+      const autoToggle=document.createElement("input");autoToggle.type="checkbox";autoToggle.className="switch";autoToggle.id=`auto-apply-${described.key}`;autoToggle.checked=true;autoToggle.dataset.destinationAutoApply=described.key;autoToggle.setAttribute("aria-label",`${label}: the watcher writes this plugin's changes without being asked`);
+      autoToggle.onchange=()=>saveConfig().catch(error=>{toast(error.message,"error");loadConfig()});
+      auto.append(autoState,autoToggle);
+      const autoHint=document.createElement("p");autoHint.className="status-meta auto-apply-hint";autoHint.dataset.destinationAutoApplyHint=described.key;autoHint.textContent="Written by the watcher while Watch PSL is on.";
+      // Preview and Apply are this plugin's own: each button runs this destination
+      // alone, from its own page, so one plugin's failed run cannot review or write
+      // another's rows, and no plugin has to wait for a run of the whole install.
+      const runBox=document.createElement("div");runBox.className="dest-run";
+      const preview=document.createElement("button");preview.type="button";preview.className="button secondary small";preview.id=`preview-${described.key}`;preview.textContent=`Preview ${label}`;
+      const apply=document.createElement("button");apply.type="button";apply.className="button warn small";apply.id=`apply-${described.key}`;apply.textContent=`Apply ${label}`;
+      preview.onclick=()=>runDestination(described.key,"preview",preview);
+      apply.onclick=()=>{if(confirm(`Apply the ${label} plan? Only what this app created may be updated or deleted; what you adopted is updated but never deleted, and anything else is left untouched.`))runDestination(described.key,"apply",apply)};
+      runBox.append(preview,apply);
+      controls.append(control,auto,autoHint,runBox);head.append(text,controls);
+      const banner=document.createElement("div");banner.className="note destination-off";banner.hidden=true;banner.textContent=`${label} is switched off. Runs skip it and its settings are not checked; nothing it already created is removed.`;
+      const summary=document.createElement("p");summary.className="dest-summary status-meta";summary.dataset.destinationSummary=described.key;summary.textContent="Not run yet.";
+      const body=document.createElement("div");body.className="dest-body";
+      const main=document.createElement("section");main.className="panel dest-main";
+      const strip=document.createElement("div");strip.className="tabs";strip.setAttribute("role","tablist");strip.setAttribute("aria-label",`${label} sections`);
+      const panels=document.createElement("div");panels.className="dest-panels";
+      main.append(strip,panels);
+      const side=document.createElement("aside");side.className="dest-side";
+      body.append(main,side);page.append(head,banner,summary,body);
+      return {page,strip,panels,side}
+    }
+    function paintFlow(status){
+      const line=$("flow-guests");
+      if(line)line.textContent=status.last_check?`${status.guest_count??0} guest${status.guest_count===1?"":"s"} found`:"Not read yet";
+      const source=document.querySelector(".flow-source");
+      if(source)source.dataset.state=status.state||""
+    }
+    function renderFlow(listed){
+      const host=$("flow-plugins");if(!host)return;host.replaceChildren();
+      if(!listed.length){const none=document.createElement("p");none.className="flow-empty";none.textContent="No destination plugin is installed, so a run has nothing to write to.";host.append(none);return}
+      listed.forEach((described,index)=>{
+        const card=document.createElement("button");card.type="button";card.className="flow-plugin";card.dataset.destination=described.key;card.dataset.accent=ACCENTS[index%ACCENTS.length];
+        const name=document.createElement("strong");name.textContent=destinationLabel(described);
+        const meta=document.createElement("span");meta.dataset.flowState=described.key;meta.textContent="plugin \u00b7 "+described.key;
+        card.append(name,meta);card.onclick=()=>showPage(`dest-${described.key}`,true);host.append(card)
+      })
+    }
+    function renderDestinations(listed){
+      destinationList=listed;
+      const list=$("destination-list");const pages=$("destination-pages");
+      if(!list||!pages)return;
+      list.replaceChildren();pages.replaceChildren();
+      if(!listed.length){const none=document.createElement("p");none.className="nav-hint";none.textContent="No destination is installed, so a run has nothing to write to.";list.append(none)}
+      const staging=$("plugin-staging");
+      listed.forEach((described,index)=>{
+        list.append(navItem(described,index));
+        const built=destinationPage(described,index);
+        // Attached first: selecting a tab looks its panel up by id, which a detached page cannot answer.
+        pages.append(built.page);
+        for(const chunk of staging.querySelectorAll(`[data-host][data-destination="${described.key}"]`)){
+          const target={tabs:built.strip,panels:built.panels,side:built.side}[chunk.dataset.host]||built.panels;
+          target.append(chunk)
+        }
+        const mountedTabs=[...built.strip.querySelectorAll(".tab")];
+        if(mountedTabs.length){selectTab(mountedTabs[0]);wireTabStrip(built.strip)}
+        else{built.strip.hidden=true;if(!built.panels.children.length){const bare=document.createElement("p");bare.className="empty";bare.textContent="This plugin brings no panel of its own, so there is nothing to configure here.";built.panels.append(bare)}}
+      });
+      renderFlow(listed);
+      paintDestinationBadge(listed.length)
     }
     function paintDestinationBadge(count){const badge=$("destination-badge");if(badge)badge.textContent=count?`${count} destination plugin${count===1?"":"s"}`:"No destination plugins"}
-    function renderDestinations(listed){
-      const list=$("destination-list");
-      if(!list)return;
-      list.replaceChildren();
-      if(!listed.length){const none=document.createElement("p");none.className="empty";none.textContent="No destination is installed, so a run has nothing to write to.";list.append(none)}
-      for(const described of listed)list.append(destinationRow(described));
-      paintDestinationBadge(listed.length);
-      renderTabSources(listed)
+    function collectEnabled(){const flags={};for(const toggle of document.querySelectorAll("[data-destination-switch]"))flags[toggle.dataset.destinationSwitch]=toggle.checked;return flags}
+    function collectAutoApply(){const flags={};for(const toggle of document.querySelectorAll("[data-destination-auto-apply]"))flags[toggle.dataset.destinationAutoApply]=toggle.checked;return flags}
+    function paintAutoApply(config){const flags=config.destinations_auto_apply||{};for(const toggle of document.querySelectorAll("[data-destination-auto-apply]"))toggle.checked=flags[toggle.dataset.destinationAutoApply]!==false;paintAutoApplyHints()}
+    function paintAutoApplyHints(){
+      // What the switches together mean for one plugin, said on its own page, so a
+      // plugin left for manual apply cannot be mistaken for one being written.
+      const master=$("auto-apply");const masterOn=!master||master.checked;
+      for(const hint of document.querySelectorAll("[data-destination-auto-apply-hint]")){
+        const key=hint.dataset.destinationAutoApplyHint;
+        const enabled=document.querySelector(`[data-destination-switch="${key}"]`);
+        const auto=document.querySelector(`[data-destination-auto-apply="${key}"]`);
+        const written=(!enabled||enabled.checked)&&masterOn&&(!auto||auto.checked);
+        hint.dataset.state=written?"":"blocked";
+        if(enabled&&!enabled.checked)hint.textContent="Switched off: runs skip it, so the watcher writes nothing.";
+        else if(!masterOn)hint.textContent="The master Automatically apply switch is off, so the watcher only reads PSL and writes nothing.";
+        else if(auto&&!auto.checked)hint.textContent="Left for manual apply: the watcher reads PSL and writes nothing here.";
+        else hint.textContent="Written by the watcher while Watch PSL is on."
+      }
+    }
+    function paintEnabledState(key,on){
+      const page=$(`page-dest-${key}`);
+      if(page){page.classList.toggle("off",!on);const banner=page.querySelector(".destination-off");if(banner)banner.hidden=on;const label=page.querySelector(".enable-label");if(label)label.textContent=on?"Enabled":"Switched off"}
+      const item=document.querySelector(`.nav-item[data-destination="${key}"]`);if(item)item.classList.toggle("off",!on);
+      paintAutoApplyHints();
+      if(latestStatus)renderResults(latestStatus)
+    }
+    function paintEnabled(config){const flags=config.destinations_enabled||{};for(const toggle of document.querySelectorAll("[data-destination-switch]")){const on=flags[toggle.dataset.destinationSwitch]!==false;toggle.checked=on;paintEnabledState(toggle.dataset.destinationSwitch,on)}}
+    const CHANGE_STATUSES=new Set(["CREATE","UPDATE","DELETE","DRY-CREATE","DRY-UPDATE","DRY-DELETE"]);
+    let latestStatus=null;
+    function rowsFor(status,described){const label=destinationLabel(described);return {changes:(status.planned||[]).filter(row=>row.destination===label),attention:(status.skipped||[]).filter(row=>row.destination===label)}}
+    function isEnabled(described){const toggle=document.querySelector(`[data-destination-switch="${described.key}"]`);return !toggle||toggle.checked}
+    function resultRow(row){const tr=document.createElement("tr");const result=document.createElement("td");const tag=document.createElement("span");tag.className=`tag ${row.status||""}`;tag.textContent=row.status||"";result.append(tag);const name=document.createElement("td");name.textContent=row.domain||row.name||"";const detail=document.createElement("td");detail.textContent=[row.instance,row.details||row.reason].filter(Boolean).join(" \u00b7 ");tr.append(result,name,detail);return tr}
+    function renderResults(status){
+      latestStatus=status;
+      const host=$("results-by-destination");if(!host)return;
+      host.replaceChildren();
+      if(!destinationList.length){const none=document.createElement("p");none.className="empty";none.textContent="No destination is installed, so a run has nothing to write to.";host.append(none);return}
+      destinationList.forEach((described,index)=>{
+        const label=destinationLabel(described);const {changes,attention}=rowsFor(status,described);const on=isEnabled(described);
+        const card=document.createElement("article");card.className="result-card";card.dataset.destination=described.key;card.dataset.accent=ACCENTS[index%ACCENTS.length];card.classList.toggle("off",!on);
+        const head=document.createElement("div");head.className="result-head";
+        const name=document.createElement("strong");name.textContent=label;
+        const key=document.createElement("span");key.className="tag plugin-key";key.textContent=described.key;
+        const open=document.createElement("button");open.type="button";open.className="button secondary small";open.textContent="Open page";open.onclick=()=>showPage(`dest-${described.key}`,true);
+        head.append(name,key,open);card.append(head);
+        const note=document.createElement("p");note.className="status-meta";
+        if(!on)note.textContent="Switched off: runs skip this destination.";
+        else if(!status.last_check)note.textContent="Not run yet.";
+        else if(!changes.length&&!attention.length)note.textContent="Nothing to change.";
+        else note.textContent=`${changes.filter(row=>CHANGE_STATUSES.has(row.status)).length} change(s) \u00b7 ${attention.length} item(s) need attention`;
+        card.append(note);
+        if(on&&(changes.length||attention.length)){
+          const wrap=document.createElement("div");wrap.className="table-wrap";const table=document.createElement("table");table.className="results";
+          const body=document.createElement("tbody");
+          for(const row of [...changes.filter(row=>row.status!=="OK"),...attention].slice(0,12))body.append(resultRow(row));
+          const hidden=changes.filter(row=>row.status!=="OK").length+attention.length-12;
+          table.append(body);wrap.append(table);card.append(wrap);
+          if(hidden>0){const more=document.createElement("p");more.className="status-meta";more.textContent=`${hidden} more not shown. Open the destination's page for the full list.`;card.append(more)}
+        }
+        host.append(card)
+      })
+    }
+    function paintDestinationState(status){
+      for(const described of destinationList){
+        const label=destinationLabel(described);const {changes,attention}=rowsFor(status,described);
+        const failed=status.state==="error"&&String(status.message||"").includes(`${label}:`);
+        const count=changes.filter(row=>CHANGE_STATUSES.has(row.status)).length;
+        const text=!status.last_check?"Not run yet.":failed?`Failed: ${status.message}`:`${count} change(s) \u00b7 ${attention.length} item(s) need attention`;
+        const summary=document.querySelector(`[data-destination-summary="${described.key}"]`);if(summary)summary.textContent=text;
+        const item=document.querySelector(`.nav-item[data-destination="${described.key}"]`);
+        if(item){item.classList.toggle("failed",failed);const flow=document.querySelector(`[data-flow-state="${described.key}"]`);if(flow)flow.textContent=failed?"failed on the last run":count||attention.length?`${count} change(s) \u00b7 ${attention.length} to check`:"plugin \u00b7 "+described.key;const sub=item.querySelector("[data-nav-state]");if(sub)sub.textContent=failed?"failed on the last run":count||attention.length?`${count} change(s) \u00b7 ${attention.length} to check`:`plugin \u00b7 ${described.key}`}
+      }
     }
     function mountScript(descriptor){
       return new Promise((resolve,reject)=>{
@@ -625,13 +790,11 @@
       renderDestinations(listed.destinations||[]);
       wireTestButtons();
       document.documentElement.style.setProperty("--tab-count",String(tabButtons().length));
-      const first=tabButtons()[0];
-      if(first)showTab(first.dataset.tab,false)
     }
     async function refreshDestinations(){for(const destination of destinations){if(destination.refresh)await destination.refresh()}}
     window.RPA={$:$,api:api,toast:toast,textInput:textInput,secretField:secretField,saveConfig:saveConfig,paintDirty:paintDirty,showTab:showTab,register:registerDestination};
     document.addEventListener("input",paintDirty);document.addEventListener("change",paintDirty);window.addEventListener("beforeunload",event=>{if(!formState().dirty)return;event.preventDefault();event.returnValue=""});
-    async function initialize(){await mountDestinations();await loadConfig();const status=await api("/api/status");renderStatus(status);await refreshDestinations()}
+    async function initialize(){await mountDestinations();await loadConfig();const status=await api("/api/status");renderStatus(status);await refreshDestinations();showPage(location.hash.slice(1)||"overview")}
     async function pollStatus(){try{await refreshStatus()}catch(error){console.warn("Status refresh failed:",error.message)}setTimeout(pollStatus,5000)}
     initialize().catch(error=>toast(error.message,"error"));setTimeout(pollStatus,5000);
   </script>
