@@ -1,10 +1,4 @@
-"""Settings, state and the run, wired to destination plugins.
-
-The core owns the source (PVE Scripts Local), the settings file, the state file,
-the run lock and the watcher loop. Everything a destination knows about itself -
-its settings keys, its secrets, its records, its panel actions - lives in its own
-package and is reached through the plugin registry, so adding a destination edits
-nothing here.
+"""Main service facade for reverse proxy automation.
 """
 
 import json
@@ -21,82 +15,246 @@ from .clients import PveScriptsLocalClient
 from .integrations import PslSourceAdapter
 from .plugins.base import UnknownTarget
 from .plugins.registry import default_registry
-from .settings import (
-    as_bool as _as_bool,
-    check_reference_name as _check_reference_name,
-    check_secret_references as _check_secret_fields,
-    plaintext_secret_fields as _plaintext_secret_fields,
-    resolve_secret,
-    secret_env_name,
-    unresolved_secret_references as _unresolved_secret_fields,
-)
+from .settings import resolve_secret, as_bool as _as_bool, secret_env_name, check_reference_name as _check_reference_name, plaintext_secret_fields as _plaintext_secret_fields, check_secret_references as _check_secret_fields, unresolved_secret_references as _unresolved_secret_fields
 from .statefile import load_state, save_state
-
+from .config import (
+    ConfigStore,
+    validate_core_config,
+    validate_config,
+    check_secret_references,
+    normalize_config,
+    plaintext_secret_fields,
+    public_config,
+    unresolved_secret_references,
+    destination_applies,
+    destination_enabled,
+    secret_env_name,
+    DEFAULT_CONFIG,
+    FLAG_MAPS,
+    _flag_map,
+)
+from .executor import SyncExecutor
+from .sync_manager import SyncManager
 
 LOGGER = logging.getLogger(__name__)
 
-# The settings the core itself owns: the source it reads and the switches that
-# govern when and whether a run happens. A destination's keys are not listed here
-# at all - they are round-tripped through the plugin registry - so this dict is
-# the whole of the core's settings vocabulary.
-DEFAULT_CONFIG = {
-    "pve_local_url": "",
-    "pve_local_username": "",
-    "pve_local_password": "",
-    # A LAN endpoint usually serves a self-signed certificate, so the TLS check can
-    # be relaxed per endpoint: this switch for PVE Scripts Local, and each
-    # destination's own switch. Both default to verifying.
-    "pve_local_verify_tls": True,
-    "poll_interval_seconds": None,
-    "watch_enabled": False,
-    "auto_apply": False,
-    # {destination key: bool}. A destination with no entry runs, so a settings file
-    # from before this existed keeps writing to every destination it had.
-    "destinations_enabled": {},
-    # {destination key: bool}: whether the watcher may write for that destination
-    # without being asked. The master "auto_apply" above still has to agree, so one
-    # switch stops every destination at once and the per-destination ones refine it.
-    "destinations_auto_apply": {},
-}
-
-# The core's two {destination key: bool} maps. Both are saved and validated the
-# same way, so they are listed here rather than named twice.
-FLAG_MAPS = ("destinations_enabled", "destinations_auto_apply")
-
-
-def destination_enabled(config, key):
-    """Whether a destination takes part in a run. Destinations default to on."""
-    flags = config.get("destinations_enabled")
-    return _as_bool(flags.get(key), True) if isinstance(flags, dict) else True
-
-
-def destination_auto_apply(config, key):
-    """Whether the watcher may apply for this destination without being asked.
-
-    A destination that has never been given a flag applies on its own, so a
-    settings file from before this switch existed keeps working as it did.
-    """
-    flags = config.get("destinations_auto_apply")
-    return _as_bool(flags.get(key), True) if isinstance(flags, dict) else True
-
-
-def destination_applies(config, key):
-    """Whether the watcher may write for one destination by itself.
-
-    The destination's own entry governs this; the master ``auto_apply``
-    now acts as a secondary safety or a global override if desired,
-    but for individual plugin control, this is the primary gate.
-    """
-    return (
-        destination_enabled(config, key)
-        and destination_auto_apply(config, key)
-    )
-
-# The statuses a destination's rows use. A change is something the run made or would
-# make; the attention set is what a user has to look at afterwards.
+# The statuses a destination's rows use.
 CHANGE_STATUSES = {"CREATE", "UPDATE", "DELETE", "DRY-CREATE", "DRY-UPDATE", "DRY-DELETE"}
 ATTENTION_STATUSES = {"CONFLICT", "SKIP", "ERROR"}
 
+class SyncService:
+    def __init__(self, config_store, state_path, source_adapter=None,
+                 destination_adapters=None, registry=None):
+        self.config_store = config_store
+        self.state_path = Path(state_path)
+        self.registry = registry or getattr(config_store, "registry", None) or default_registry()
+        self.lock = threading.RLock()
+        self.run_lock = threading.Lock()
+        self.wake = threading.Event()
+        self.stop_event = threading.Event()
+        
+        # Initialize executors and manager
+        self.executor = SyncExecutor(self)
+        self.manager = SyncManager(self)
+        
+        self.source_adapter = source_adapter or PslSourceAdapter(self._source_client)
+        
+        lent = self.registry.adapters(
+            self.config_store, self.state_path, self.lock, self.wake.set,
+            run=self._run_destination_for,
+            source_snapshot=self.source_snapshot,
+            refresh_source=self.refresh_source,
+        )
+        self.destination_adapters = tuple(lent if destination_adapters is None else destination_adapters)
+        
+        self.snapshot = None
+        self.results = {}
+        self.status = {
+            "state": "idle",
+            "message": "Configure the PSL endpoint to begin.",
+            "last_check": None,
+            "last_apply": None,
+            "guest_count": 0,
+            "timings": {},
+        }
+        # Load previous run metrics from state if available
+        try:
+            state = load_state(self.state_path)
+            metrics = state.get("_last_run_metrics")
+            if metrics:
+                self.status.update(metrics)
+        except Exception:
+            LOGGER.debug("Could not load previous run metrics from state")
+
+        self.thread = threading.Thread(target=self.manager._run_loop, name="psl-sync", daemon=True)
+        self.thread.start()
+
+    def get_status(self):
+        with self.lock:
+            status = dict(self.status)
+            results = self._results_in_order()
+            status["destinations"] = results
+            status["planned"] = [
+                row for result in results.values() for row in result.get("planned", [])
+            ]
+            status["skipped"] = [
+                row for result in results.values() for row in result.get("skipped", [])
+            ]
+            return status
+
+    def _results_in_order(self):
+        order = [adapter.key for adapter in self.destination_adapters]
+        keys = [key for key in order if key in self.results]
+        keys.extend(key for key in self.results if key not in order)
+        return {key: dict(self.results[key]) for key in keys}
+
+    def _set_status(self, **updates):
+        with self.lock:
+            self.status.update(updates)
+
+    def _busy(self, message):
+        return {**self.get_status(), "state": "busy", "message": message}
+
+    def _fail(self, error):
+        self._set_status(
+            state="error",
+            message=str(error),
+            last_check=datetime.now(timezone.utc).isoformat(),
+            guest_count=0,
+        )
+        return self.get_status()
+
+    def _run_destination_for(self, key, apply_changes=False, refresh_lxc_config=True):
+        return self.run_destination(key, apply_changes, refresh_lxc_config)
+
+    def run_once(self, apply_changes=False, refresh_lxc_config=False):
+        return self.manager.run_once(apply_changes, refresh_lxc_config)
+
+    def source_snapshot(self):
+        with self.lock:
+            return dict(self.snapshot) if self.snapshot else None
+
+    def refresh_source(self, refresh_lxc_config=False, wait=True):
+        return self.manager.refresh_source(refresh_lxc_config, wait)
+
+    def run_destination(self, key, apply_changes=False, refresh_lxc_config=False, wait=True):
+        adapter = next((item for item in self.destination_adapters if item.key == key), None)
+        if adapter is None:
+            raise ValueError(f"Unknown destination '{key}'")
+        
+        if not self.run_lock.acquire(blocking=wait):
+            return self._busy(f"A sync run is already in progress; {adapter.label} did not run.")
+        try:
+            config = self.config_store.load()
+            from .config import destination_enabled
+            if not destination_enabled(config, key):
+                return self._fail(f"{adapter.label} is switched off; turn it on to run it.")
+            
+            snapshot = self.source_snapshot()
+            if snapshot is None or refresh_lxc_config:
+                guests, psl_seconds = self.executor.read_source(config, refresh_lxc_config)
+                if guests is None:
+                    return self.get_status()
+            else:
+                guests = snapshot["guests"]
+                psl_seconds = snapshot["seconds"]
+            
+            return self.executor.run_destinations(config, guests, [adapter], apply_changes, psl_seconds)
+        except Exception as error:
+            return self._fail(error)
+        finally:
+            self.run_lock.release()
+
+    def auto_apply(self, config=None):
+        return self.manager.auto_apply(config)
+
+    def _validate_destination(self, config, key):
+        validate_core_config(config)
+        plugin = self.registry.get(key)
+        if plugin is not None:
+            plugin.validate(config)
+
+    def _destination_message(self, rows, plan, apply_changes):
+        mode = "Applied" if apply_changes else "Previewed"
+        actionable = sum(row[0] in CHANGE_STATUSES for row in rows)
+        attention = len(plan.get("skipped", ())) + sum(row[0] in ATTENTION_STATUSES for row in rows)
+        return f"{mode} {actionable} change(s); {attention} item(s) need attention."
+
+    def _record_destination_result(self, adapter, *, state, message, apply_changes,
+                                   guest_count=0, rows=(), plan=None):
+        now = datetime.now(timezone.utc).isoformat()
+        planned = [
+            {"destination": adapter.label, "status": row[0], "instance": row[1], "domain": row[2], "details": row[3]}
+            for row in rows
+        ]
+        skipped = [
+            {"name": name, "reason": reason, "destination": adapter.label}
+            for name, reason in (plan or {}).get("skipped", ())
+        ]
+        skipped.extend([
+            {"name": row[2], "reason": row[3], "instance": row[1], "destination": adapter.label, "status": row[0]}
+            for row in rows if row[0] in ATTENTION_STATUSES
+        ])
+        with self.lock:
+            previous = self.results.get(adapter.key, {})
+            self.results[adapter.key] = {
+                "state": state,
+                "message": message,
+                "last_check": now,
+                "last_apply": now if apply_changes else previous.get("last_apply"),
+                "guest_count": guest_count,
+                "planned": planned,
+                "skipped": skipped,
+            }
+
+    @staticmethod
+    def _source_client(config):
+        return PveScriptsLocalClient(
+            config["pve_local_url"],
+            config["pve_local_username"],
+            resolve_secret(config["pve_local_password"]),
+            verify_tls=_as_bool(config.get("pve_local_verify_tls"), True),
+        )
+
+    def destinations(self):
+        return self.registry.describe()
+
+    def invoke(self, key, action, payload=None):
+        admin = self.registry.admin(key)
+        if admin is None:
+            raise ValueError(f"Destination '{key}' does not offer panel actions")
+        return admin.invoke(action, payload if isinstance(payload, dict) else {})
+
+    def test_connection(self, target):
+        if str(target or "").strip().lower() == "pve":
+            config = self.config_store.load()
+            if not config.get("pve_local_url"):
+                raise ValueError("Set the PVE Scripts Local URL first")
+            password = config["pve_local_password"]
+            from .config import check_secret_references
+            check_secret_references({"pve_local_password": password})
+            scripts = PveScriptsLocalClient(
+                config["pve_local_url"],
+                config["pve_local_username"],
+                resolve_secret(password),
+                verify_tls=_as_bool(config.get("pve_local_verify_tls"), True),
+            )
+            scripts.list_guests()
+            return {"state": "ok", "message": "Connection to PVE Scripts Local successful."}
+        
+        adapter = next((item for item in self.destination_adapters if item.key == target), None)
+        if adapter is None:
+            raise UnknownTarget(target)
+        
+        config = self.config_store.load()
+        # Only check this destination's settings
+        from .config import validate_core_config
+        validate_core_config(config)
+        plugin = self.registry.get(adapter.key)
+        if plugin:
+            plugin.validate(config)
+            
+        return adapter.test_connection(config)
 
 def _actionable(rows, status_key):
     """How many of these rows describe a change the run made or would make.
@@ -199,15 +357,6 @@ def normalize_config(loaded, registry=None):
     for name in FLAG_MAPS:
         config[name] = _flag_map(loaded, name)
     return config
-
-
-def _flag_map(loaded, name):
-    """One {destination key: bool} map read out of a stored settings file."""
-    flags = loaded.get(name)
-    return {
-        str(key): _as_bool(value, True)
-        for key, value in (flags.items() if isinstance(flags, dict) else ())
-    }
 
 
 class ConfigStore:

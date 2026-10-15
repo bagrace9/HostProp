@@ -1,6 +1,7 @@
 import unittest
 from unittest import mock
 
+from reverse_proxy_automation.clients import ApiError
 from reverse_proxy_automation.integrations import (
     PslSourceAdapter,
     normalize_psl_record,
@@ -130,3 +131,112 @@ class DestinationAdapterTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "Set the URL for NPMPlus instance 'lab' before syncing"):
             adapter.apply(plan, config, {"managed": {}}, apply_changes=True)
+
+    def test_apply_handles_api_timeout_during_proxy_hosts_fetch(self):
+        guest = normalize_psl_record({
+            "id": 1,
+            "script_name": "photos",
+            "container_id": 101,
+            "lxc_config": {"hostname": "photos", "net_vlan": 10},
+            "web_ui_port": 8080,
+        })
+        config = {
+            "vlan_map": {"10": {"instance": "lab", "zone": "internal.example.net"}},
+            "public_domain": "example.net",
+            "excluded_guest_hostnames": "",
+            "instances": {"lab": {"url": "https://npm.example.net:81"}},
+            "entry_port_overrides": {},
+            "delete_removed_hosts": False,
+            "max_deletes_per_run": None,
+        }
+        adapter = NpmPlusDestination()
+        plan = adapter.plan([guest], config)
+        state = {"managed": {}}
+
+        # Mock client that times out on proxy_hosts() call
+        def create_client(instance, entry):
+            client = mock.Mock()
+            client.proxy_hosts.side_effect = ApiError("Request timeout", status=408)
+            return client
+
+        with mock.patch.object(NpmPlusDestination, "client_factory", staticmethod(create_client)):
+            rows = adapter.apply(plan, config, state, apply_changes=True)
+            
+        # Should return an ERROR result
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][0], "ERROR")
+        self.assertEqual(rows[0][1], "lab")
+        self.assertIn("Request timeout", rows[0][3])
+
+    def test_apply_handles_malformed_json_response(self):
+        guest = normalize_psl_record({
+            "id": 1,
+            "script_name": "photos",
+            "container_id": 101,
+            "lxc_config": {"hostname": "photos", "net_vlan": 10},
+            "web_ui_port": 8080,
+        })
+        config = {
+            "vlan_map": {"10": {"instance": "lab", "zone": "internal.example.net"}},
+            "public_domain": "example.net",
+            "excluded_guest_hostnames": "",
+            "instances": {"lab": {"url": "https://npm.example.net:81"}},
+            "entry_port_overrides": {},
+            "delete_removed_hosts": False,
+            "max_deletes_per_run": None,
+        }
+        adapter = NpmPlusDestination()
+        plan = adapter.plan([guest], config)
+        state = {"managed": {}}
+
+        # Mock client that returns malformed JSON (non-JSON response)
+        def create_client(instance, entry):
+            client = mock.Mock()
+            # This will trigger _not_json error in JsonClient
+            client.proxy_hosts.side_effect = ApiError("GET https://npm.example.net:81/api/nginx/proxy-hosts?expand=certificate did not return JSON (content-type text/html)")
+            return client
+
+        with mock.patch.object(NpmPlusDestination, "client_factory", staticmethod(create_client)):
+            rows = adapter.apply(plan, config, state, apply_changes=True)
+            
+        # Should return an ERROR result
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][0], "ERROR")
+        self.assertEqual(rows[0][1], "lab")
+        self.assertIn("did not return JSON", rows[0][3])
+
+    def test_apply_handles_connection_error(self):
+        guest = normalize_psl_record({
+            "id": 1,
+            "script_name": "photos",
+            "container_id": 101,
+            "lxc_config": {"hostname": "photos", "net_vlan": 10},
+            "web_ui_port": 8080,
+        })
+        config = {
+            "vlan_map": {"10": {"instance": "lab", "zone": "internal.example.net"}},
+            "public_domain": "example.net",
+            "excluded_guest_hostnames": "",
+            "instances": {"lab": {"url": "https://npm.example.net:81"}},
+            "entry_port_overrides": {},
+            "delete_removed_hosts": False,
+            "max_deletes_per_run": None,
+        }
+        adapter = NpmPlusDestination()
+        plan = adapter.plan([guest], config)
+        state = {"managed": {}}
+
+        # Mock client that raises connection error
+        def create_client(instance, entry):
+            client = mock.Mock()
+            client.proxy_hosts.side_effect = ApiError("Could not reach https://npm.example.net:81: Failed to establish connection")
+            return client
+
+        with mock.patch.object(NpmPlusDestination, "client_factory", staticmethod(create_client)):
+            rows = adapter.apply(plan, config, state, apply_changes=True)
+            
+        # Should return an ERROR result
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][0], "ERROR")
+        self.assertEqual(rows[0][1], "lab")
+        self.assertIn("Could not reach", rows[0][3])

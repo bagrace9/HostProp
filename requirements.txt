@@ -1,12 +1,13 @@
-# Reverse Proxy Automation uses only the Python standard library.
+# Reverse Proxy Automation uses the Python standard library and portalocker for file locking.
 #
-# There is intentionally nothing to install: `pip install -r requirements.txt`
-# succeeds and resolves no packages. This file exists so installers, containers
+# There is intentionally nothing else to install: `pip install -r requirements.txt`
+# succeeds and resolves portalocker. This file exists so installers, containers
 # and CI that expect a requirements.txt do not fail on its absence.
 #
-# Verified with: python -m pip freeze   ->  (empty)
+# Verified with: python -m pip freeze   ->  portalocker==2.0.0 or higher
 # Requires Python 3.11 or newer. Runtime environment variables are documented in
 # .env.example; they are configuration, not dependencies.
 #
 # When a third-party package becomes necessary, pin it here with an explicit
 # version, for example:  requests==2.32.3
+portalocker>=2.0.0

@@ -299,6 +299,21 @@ class Handler(BaseHTTPRequestHandler):
                         apply_changes=verb == "apply",
                         refresh_lxc_config=True,
                     ))
+                elif verb == "toggle_auto_apply":
+                    body = self._body()
+                    value = body.get("value")
+                    if value not in (True, False):
+                        self._json(400, {"error": "Missing or invalid 'value' (true/false)"})
+                        return
+                    config = self.server.config_store.load()
+                    flags = config.get("destinations_auto_apply", {})
+                    if not isinstance(flags, dict):
+                        flags = {}
+                    flags[key] = value
+                    config["destinations_auto_apply"] = flags
+                    self.server.config_store.save(config)
+                    self.server.sync_service.wake_loop()
+                    self._json(200, {"ok": True})
                 elif verb:
                     self._json(404, {"error": f"Unknown destination request '{verb}'"})
                 else:
